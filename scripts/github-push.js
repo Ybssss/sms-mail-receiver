@@ -36,5 +36,11 @@ if (ok('git remote get-url origin')) {
   run(`git remote add origin ${REMOTE}`);
 }
 
+if (ok('git fetch origin main')) {
+  if (ok('git rev-parse --verify origin/main')) {
+    run('git pull --rebase origin main --allow-unrelated-histories');
+  }
+}
+
 run('git push -u origin main');
 console.log('\nDone: https://github.com/Ybssss/sms-mail-receiver');
