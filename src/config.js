@@ -1,5 +1,10 @@
 require('dotenv').config();
 
+function parseAdminIds(raw) {
+  if (!raw) return [];
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 const config = {
   port: parseInt(process.env.PORT || '3000', 10),
   botToken: process.env.TELEGRAM_BOT_TOKEN || '',
@@ -16,6 +21,33 @@ const config = {
   keepAliveIntervalMs: parseInt(process.env.KEEPALIVE_INTERVAL_MS || '600000', 10),
   defaultSite: process.env.DEFAULT_EMAIL_SITE || 'telegram.com',
   defaultDomain: process.env.DEFAULT_EMAIL_DOMAIN || 'gmail.com',
+
+  // Gems & exchange rate: at USD/MYR=4 → 1 MYR = 10,000 gems; scales dynamically
+  baseUsdMyr: parseFloat(process.env.BASE_USD_MYR || '4'),
+  baseGemsPerMyr: parseInt(process.env.BASE_GEMS_PER_MYR || '10000', 10),
+  exchangeRateCacheMs: parseInt(process.env.EXCHANGE_RATE_CACHE_MS || '3600000', 10),
+  orderMarkupPercent: parseFloat(process.env.ORDER_MARKUP_PERCENT || '20'),
+  minOrderGems: parseInt(process.env.MIN_ORDER_GEMS || '1000', 10),
+  defaultOrderCostMyr: parseFloat(process.env.DEFAULT_ORDER_COST_MYR || '0.50'),
+  minTopupMyr: parseFloat(process.env.MIN_TOPUP_MYR || '5'),
+
+  // Billplz (FPX, card, TnG, GrabPay via gateway)
+  billplzApiKey: process.env.BILLPLZ_API_KEY || '',
+  billplzCollectionId: process.env.BILLPLZ_COLLECTION_ID || '',
+  billplzXSignatureKey: process.env.BILLPLZ_X_SIGNATURE || '',
+  billplzApiUrl: (process.env.BILLPLZ_API_URL || 'https://www.billplz.com/api').replace(/\/$/, ''),
+
+  // Telegram Stars
+  telegramPaymentProviderToken: process.env.TELEGRAM_PAYMENT_PROVIDER_TOKEN || '',
+  myrPerStar: parseFloat(process.env.MYR_PER_STAR || '0.052'),
+
+  // Manual top-up (settles to your TnG / bank directly)
+  manualTngPhone: process.env.MANUAL_TNG_PHONE || '',
+  manualBankName: process.env.MANUAL_BANK_NAME || '',
+  manualBankAccount: process.env.MANUAL_BANK_ACCOUNT || '',
+  manualBankHolder: process.env.MANUAL_BANK_HOLDER || '',
+
+  adminTelegramIds: parseAdminIds(process.env.ADMIN_TELEGRAM_IDS),
 };
 
 function validateConfig() {

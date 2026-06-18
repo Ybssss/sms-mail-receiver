@@ -18,11 +18,12 @@
     <main class="container">
       <header class="header">
         <div>
-          <p class="eyebrow">Hero-SMS · Zero-delay receiver</p>
+          <p class="eyebrow">Hero-SMS · Gems wallet</p>
           <h1>Mail inbox</h1>
-          <p class="subtitle">Webhook + 2s polling. Render keep-alive prevents cold starts.</p>
+          <p class="subtitle">Top up gems, order emails, receive codes instantly via webhook + 2s polling.</p>
         </div>
         <div class="header-actions">
+          <span class="status-pill gems-pill" id="gems-balance">💎 —</span>
           <span class="status-pill" id="live-status">Connecting…</span>
           <a class="btn-secondary" href="https://t.me/" id="telegram-link" target="_blank" rel="noopener">Telegram bot</a>
         </div>
@@ -30,17 +31,29 @@
 
       <section class="stats">
         <article class="stat-card">
+          <span class="stat-label">Gems per MYR</span>
+          <strong id="gems-per-myr">—</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">USD / MYR</span>
+          <strong id="usd-myr">—</strong>
+        </article>
+        <article class="stat-card">
           <span class="stat-label">Poll interval</span>
           <strong id="poll-interval">—</strong>
         </article>
-        <article class="stat-card">
-          <span class="stat-label">Keep-alive</span>
-          <strong id="keepalive-status">—</strong>
-        </article>
-        <article class="stat-card">
-          <span class="stat-label">Webhook URL</span>
-          <code id="webhook-url" class="mono">—</code>
-        </article>
+      </section>
+
+      <section class="panel" id="topup-panel">
+        <h2>Top up gems</h2>
+        <div id="packages-grid" class="packages-grid"></div>
+        <div class="custom-topup">
+          <input id="custom-myr" type="number" min="5" step="1" placeholder="Custom RM amount" />
+          <select id="topup-method"></select>
+          <button type="button" id="custom-topup-btn">Top up</button>
+        </div>
+        <p class="hint" id="topup-result"></p>
+        <p class="hint">Billplz supports FPX, card, TnG, GrabPay → settles to your bank. Manual TnG/bank goes directly to your accounts.</p>
       </section>
 
       <section class="panel">
@@ -50,7 +63,7 @@
           <input id="domain-input" type="text" placeholder="Domain (e.g. gmail.com)" required />
           <button type="submit">Order now</button>
         </form>
-        <p class="hint">Use the same site/domain as in Hero-SMS dashboard. Codes appear here and in Telegram instantly.</p>
+        <p class="hint" id="order-cost-hint">Cost in gems shown after domain load.</p>
       </section>
 
       <section class="panel">
@@ -59,7 +72,7 @@
           <button type="button" id="refresh-btn" class="btn-secondary">Refresh</button>
         </div>
         <div id="orders-list" class="orders-list"></div>
-        <p id="empty-state" class="empty-state">No orders yet. Order above or use /order in Telegram.</p>
+        <p id="empty-state" class="empty-state">No orders yet. Top up gems and order above.</p>
       </section>
 
       <section class="panel token-panel" id="token-panel">

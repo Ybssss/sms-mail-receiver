@@ -1,6 +1,6 @@
 const { Telegraf, Markup } = require('telegraf');
 const { config } = require('../config');
-const { orderEmail, cancelEmail, getDomains, getEmail } = require('../services/heroSms');
+const { getDomains, getEmail } = require('../services/heroSms');
 const {
   getOrCreateTelegramUser,
   saveOrder,
@@ -10,6 +10,18 @@ const {
   formatOrderList,
 } = require('../services/mailStore');
 const { setNotifier } = require('../services/notifier');
+const { getUserBalance, formatGems } = require('../services/gems');
+const { getExchangeInfo } = require('../services/exchangeRate');
+const { placeOrder, cancelOrderWithRefund, estimateOrderCost } = require('../services/orderService');
+const {
+  createTopup,
+  getWalletInfo,
+  handleTelegramSuccessfulPayment,
+  isAdmin,
+  adminApprovePayment,
+} = require('../services/payments');
+const { listPendingManualPayments } = require('../services/payments/store');
+const { buildStarsPayload } = require('../services/payments/telegramStars');
 
 function webLink(token) {
   if (!config.webappUrl) {
@@ -25,8 +37,8 @@ function webhookUrl() {
 
 function mainKeyboard(token) {
   const buttons = [
-    [Markup.button.callback('📬 Active mail', 'list')],
-    [Markup.button.callback('🛒 Order mail', 'order_default')],
+    [Markup.button.callback('💎 Balance', 'balance'), Markup.button.callback('➕ Top up', 'topup_menu')],
+    [Markup.button.callback('📬 Active mail', 'list'), Markup.button.callback('🛒 Order mail', 'order_default')],
   ];
 
   if (config.webappUrl) {
@@ -57,6 +69,18 @@ function findTokenForOrder(order) {
     `)
     .get(order.id);
   return row?.access_token || '';
+}
+
+async function formatBalanceMessage(userId) {
+  const wallet = await getWalletInfo(userId);
+  const ex = wallet.exchange;
+  return [
+    `💎 Balance: ${formatGems(wallet.balance)} gems`,
+    `Rate: 1 MYR = ${ex.gemsPerMyr.toLocaleString()} gems`,
+    `(USD/MYR ${ex.usdMyr.toFixed(4)}, base ${ex.baseUsdMyr})`,
+    '',
+    `Formula: ${ex.formula}`,
+  ].join('\n');
 }
 
 function createBot() {
@@ -95,37 +119,84 @@ function createBot() {
       [
         `Welcome, ${ctx.from.first_name}!`,
         '',
-        'Automated Hero-SMS mail receiver.',
-        'Order disposable emails and get codes instantly here or on the web.',
+        'Automated Hero-SMS mail receiver with gems wallet.',
+        'Top up gems, order disposable emails, get codes instantly.',
         '',
         'Commands:',
-        '/order [site] [domain] — buy email (default from env)',
+        '/balance — gems balance & exchange rate',
+        '/topup — buy gems (FPX, TnG, Stars, bank)',
+        '/order [site] [domain] — buy email',
         '/list — active orders',
         '/mail <id> — order details',
-        '/domains — available domains',
-        '/cancel <id> — cancel order',
+        '/domains — available domains + gem prices',
+        '/cancel <id> — cancel order (refund gems if no mail)',
         '/web — web dashboard link',
-        '/webhook — webhook URL for Hero-SMS dashboard',
         '/help — help',
-        '',
-        `Webhook (set in Hero-SMS): ${webhookUrl()}`,
       ].join('\n'),
-      mainKeyboard(user.access_token)
+      mainKeyboard(user.accessToken)
     );
   });
 
   bot.command('help', async (ctx) => {
     await ctx.reply(
       [
+        '/balance',
+        '/topup',
         '/order telegram.com gmail.com',
         '/list',
         '/mail 1',
         '/domains',
         '/cancel 1',
         '/web',
-        '/webhook',
       ].join('\n')
     );
+  });
+
+  bot.command('balance', async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    await ctx.reply(await formatBalanceMessage(user.id), mainKeyboard(user.accessToken));
+  });
+
+  bot.command('topup', async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const wallet = await getWalletInfo(user.id);
+    const buttons = wallet.packages.map((pkg) => [
+      Markup.button.callback(`${pkg.name} — RM${pkg.priceMyr}`, `topup_pkg_${pkg.id}`),
+    ]);
+    buttons.push([Markup.button.callback('Custom amount (web)', 'topup_web')]);
+    await ctx.reply(
+      [
+        'Choose a gem package:',
+        `Current rate: 1 MYR = ${wallet.exchange.gemsPerMyr.toLocaleString()} gems`,
+        '',
+        wallet.methods.map((m) => `• ${m.name}`).join('\n') || 'Configure payment env vars on server.',
+      ].join('\n'),
+      Markup.inlineKeyboard(buttons)
+    );
+  });
+
+  bot.command('approve', async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply('Admin only.');
+      return;
+    }
+    const id = parseInt(ctx.message.text.replace(/^\/approve\s*/i, ''), 10);
+    if (!id) {
+      const pending = listPendingManualPayments();
+      if (!pending.length) {
+        await ctx.reply('No pending manual payments.');
+        return;
+      }
+      const lines = pending.map((p) => `#${p.id} user ${p.telegramId || p.userId} RM${p.amountMyr} → ${formatGems(p.gems)} gems (${p.provider})`);
+      await ctx.reply(['Pending payments:', ...lines, '', 'Use /approve <id>'].join('\n'));
+      return;
+    }
+    try {
+      const result = await adminApprovePayment(id);
+      await ctx.reply(`Approved #${id}. Credited ${formatGems(result.payment.gems)} gems. New balance tracked in ledger.`);
+    } catch (err) {
+      await ctx.reply(`Failed: ${err.message}`);
+    }
   });
 
   bot.command('webhook', async (ctx) => {
@@ -141,16 +212,21 @@ function createBot() {
 
   bot.command('web', async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.reply(`Web dashboard:\n${webLink(user.access_token)}`, mainKeyboard(user.access_token));
+    await ctx.reply(`Web dashboard:\n${webLink(user.accessToken)}`, mainKeyboard(user.accessToken));
   });
 
   bot.command('domains', async (ctx) => {
     try {
       const domains = await getDomains();
-      const lines = (Array.isArray(domains) ? domains : []).slice(0, 20).map((d) => {
-        return `• ${d.name} — cost ${d.cost}, stock ${d.count}`;
-      });
-      await ctx.reply(lines.length ? lines.join('\n') : 'No domains returned.');
+      const ex = await getExchangeInfo();
+      const lines = await Promise.all(
+        (Array.isArray(domains) ? domains : []).slice(0, 20).map(async (d) => {
+          const { costGems } = await estimateOrderCost(d.name || d.domain);
+          return `• ${d.name} — ${costGems.toLocaleString()} gems, stock ${d.count}`;
+        })
+      );
+      lines.unshift(`Rate: 1 MYR = ${ex.gemsPerMyr.toLocaleString()} gems`);
+      await ctx.reply(lines.length > 1 ? lines.join('\n') : 'No domains returned.');
     } catch (err) {
       await ctx.reply(`Hero-SMS error: ${err.message}`);
     }
@@ -159,7 +235,7 @@ function createBot() {
   bot.command('list', async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const orders = listOrders(user.id, { limit: 20 });
-    await ctx.reply(formatOrderList(orders), mainKeyboard(user.access_token));
+    await ctx.reply(formatOrderList(orders), mainKeyboard(user.accessToken));
   });
 
   bot.command('mail', async (ctx) => {
@@ -179,9 +255,9 @@ function createBot() {
     try {
       const remote = await getEmail(order.heroId);
       const updated = saveOrder(user.id, remote);
-      await ctx.reply(formatOrder(updated), mainKeyboard(user.access_token));
+      await ctx.reply(formatOrder(updated), mainKeyboard(user.accessToken));
     } catch {
-      await ctx.reply(formatOrder(order), mainKeyboard(user.access_token));
+      await ctx.reply(formatOrder(order), mainKeyboard(user.accessToken));
     }
   });
 
@@ -192,14 +268,21 @@ function createBot() {
     const domain = parts[1] || config.defaultDomain;
 
     try {
-      await ctx.reply(`Ordering ${site} @ ${domain}…`);
-      const remote = await orderEmail(site, domain);
-      const saved = saveOrder(user.id, remote);
+      const { costGems } = await estimateOrderCost(domain);
+      await ctx.reply(`Ordering ${site} @ ${domain} (${costGems.toLocaleString()} gems)…`);
+      const { order: saved } = await placeOrder(user.id, site, domain);
       await ctx.reply(
         ['Order placed ✅', '', formatOrder(saved), '', 'Watching for incoming mail…'].join('\n'),
-        mainKeyboard(user.access_token)
+        mainKeyboard(user.accessToken)
       );
     } catch (err) {
+      if (err.code === 'INSUFFICIENT_GEMS') {
+        await ctx.reply(
+          `Not enough gems. Need ${err.requiredGems.toLocaleString()}, have ${err.balance.toLocaleString()}.\nUse /topup to buy gems.`,
+          mainKeyboard(user.accessToken)
+        );
+        return;
+      }
       await ctx.reply(`Order failed: ${err.message}`);
     }
   });
@@ -219,19 +302,129 @@ function createBot() {
     }
 
     try {
-      await cancelEmail(order.heroId);
-      saveOrder(user.id, { ...order, heroId: order.heroId, status: 'CANCELLED' });
-      await ctx.reply(`Cancelled order #${id}`, mainKeyboard(user.access_token));
+      await cancelOrderWithRefund(user.id, order);
+      await ctx.reply(`Cancelled order #${id}`, mainKeyboard(user.accessToken));
     } catch (err) {
       await ctx.reply(`Cancel failed: ${err.message}`);
     }
+  });
+
+  bot.action('balance', async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    await ctx.answerCbQuery();
+    await ctx.reply(await formatBalanceMessage(user.id), mainKeyboard(user.accessToken));
+  });
+
+  bot.action('topup_menu', async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    await ctx.answerCbQuery();
+    const wallet = await getWalletInfo(user.id);
+    const buttons = wallet.packages.map((pkg) => [
+      Markup.button.callback(`${pkg.name} — RM${pkg.priceMyr}`, `topup_pkg_${pkg.id}`),
+    ]);
+    await ctx.reply('Choose package:', Markup.inlineKeyboard(buttons));
+  });
+
+  bot.action(/^topup_pkg_(\d+)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const packageId = parseInt(ctx.match[1], 10);
+    await ctx.answerCbQuery();
+
+    const methods = [];
+    if (config.telegramPaymentProviderToken) {
+      methods.push([Markup.button.callback('⭐ Telegram Stars', `pay_stars_${packageId}`)]);
+    }
+    if (config.billplzApiKey) {
+      methods.push([Markup.button.callback('💳 FPX / Card / TnG', `pay_billplz_${packageId}`)]);
+    }
+    if (config.manualTngPhone) {
+      methods.push([Markup.button.callback('📱 TnG manual', `pay_tng_${packageId}`)]);
+    }
+    if (config.manualBankAccount) {
+      methods.push([Markup.button.callback('🏦 Bank transfer', `pay_bank_${packageId}`)]);
+    }
+
+    if (!methods.length) {
+      await ctx.reply('No payment methods configured on server.');
+      return;
+    }
+
+    await ctx.reply('Select payment method:', Markup.inlineKeyboard(methods));
+  });
+
+  bot.action(/^pay_billplz_(\d+)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const packageId = parseInt(ctx.match[1], 10);
+    await ctx.answerCbQuery();
+    try {
+      const result = await createTopup(user.id, { method: 'billplz', packageId });
+      await ctx.reply(`Pay here (FPX / card / TnG / GrabPay):\n${result.billUrl}`);
+    } catch (err) {
+      await ctx.reply(`Payment error: ${err.message}`);
+    }
+  });
+
+  bot.action(/^pay_tng_(\d+)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const packageId = parseInt(ctx.match[1], 10);
+    await ctx.answerCbQuery();
+    try {
+      const result = await createTopup(user.id, { method: 'manual_tng', packageId });
+      await ctx.reply(['Touch n Go top-up:', ...result.instructions, '', `Payment ID: #${result.paymentId}`].join('\n'));
+    } catch (err) {
+      await ctx.reply(`Payment error: ${err.message}`);
+    }
+  });
+
+  bot.action(/^pay_bank_(\d+)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const packageId = parseInt(ctx.match[1], 10);
+    await ctx.answerCbQuery();
+    try {
+      const result = await createTopup(user.id, { method: 'manual_bank', packageId });
+      await ctx.reply(['Bank transfer:', ...result.instructions, '', `Payment ID: #${result.paymentId}`].join('\n'));
+    } catch (err) {
+      await ctx.reply(`Payment error: ${err.message}`);
+    }
+  });
+
+  bot.action(/^pay_stars_(\d+)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const packageId = parseInt(ctx.match[1], 10);
+    await ctx.answerCbQuery();
+
+    try {
+      const wallet = await getWalletInfo(user.id);
+      const pkg = wallet.packages.find((p) => p.id === packageId);
+      if (!pkg) throw new Error('Package not found');
+
+      const stars = Math.max(1, Math.ceil(pkg.priceMyr / config.myrPerStar));
+      const payload = JSON.stringify({ userId: user.id, packageId, gems: pkg.gems });
+
+      await ctx.replyWithInvoice(
+        buildStarsPayload({
+          title: pkg.name,
+          description: `${pkg.gems.toLocaleString()} gems for Hero-SMS orders`,
+          starCount: stars,
+          payload,
+        })
+      );
+    } catch (err) {
+      await ctx.reply(`Stars payment error: ${err.message}`);
+    }
+  });
+
+  bot.action('topup_web', async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    await ctx.answerCbQuery();
+    await ctx.reply(`Top up on web:\n${webLink(user.accessToken)}#topup`);
   });
 
   bot.action('list', async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const orders = listOrders(user.id, { limit: 20 });
     await ctx.answerCbQuery();
-    await ctx.reply(formatOrderList(orders), mainKeyboard(user.access_token));
+    await ctx.reply(formatOrderList(orders), mainKeyboard(user.accessToken));
   });
 
   bot.action('order_default', async (ctx) => {
@@ -239,14 +432,34 @@ function createBot() {
     await ctx.answerCbQuery();
 
     try {
-      const remote = await orderEmail(config.defaultSite, config.defaultDomain);
-      const saved = saveOrder(user.id, remote);
+      const { order: saved } = await placeOrder(user.id, config.defaultSite, config.defaultDomain);
       await ctx.reply(
         ['Order placed ✅', '', formatOrder(saved), '', 'Watching for incoming mail…'].join('\n'),
-        mainKeyboard(user.access_token)
+        mainKeyboard(user.accessToken)
       );
     } catch (err) {
+      if (err.code === 'INSUFFICIENT_GEMS') {
+        await ctx.reply(`Not enough gems. Use /topup.`, mainKeyboard(user.accessToken));
+        return;
+      }
       await ctx.reply(`Order failed: ${err.message}`);
+    }
+  });
+
+  bot.on('pre_checkout_query', async (ctx) => {
+    await ctx.answerPreCheckoutQuery(true);
+  });
+
+  bot.on('successful_payment', async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    try {
+      const result = await handleTelegramSuccessfulPayment(user.id, ctx.message.successful_payment);
+      await ctx.reply(
+        `Payment received ✅\n+${formatGems(result.payment.gems)} gems\nBalance: ${formatGems(getUserBalance(user.id))} gems`,
+        mainKeyboard(user.accessToken)
+      );
+    } catch (err) {
+      await ctx.reply(`Payment recorded but credit failed: ${err.message}. Contact support with payment ID.`);
     }
   });
 

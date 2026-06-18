@@ -2,7 +2,7 @@ const path = require('path');
 const express = require('express');
 const { config } = require('../config');
 const { webhookUrl } = require('../bot/telegram');
-const { getDomains, orderEmail, cancelEmail, getEmail } = require('../services/heroSms');
+const { getDomains, getEmail } = require('../services/heroSms');
 const {
   findUserByToken,
   getOrCreateWebUser,
@@ -12,11 +12,16 @@ const {
 } = require('../services/mailStore');
 const { handleWebhookPayload } = require('../services/pollWorker');
 const { getKeepAliveStatus } = require('../workers/keepAlive');
+const { getWalletInfo, createTopup, handleBillplzCallback } = require('../services/payments');
+const { listTransactions } = require('../services/gems');
+const { placeOrder, cancelOrderWithRefund, estimateOrderCost } = require('../services/orderService');
+const { getExchangeInfo } = require('../services/exchangeRate');
 
 function createWebApp() {
   const app = express();
 
   app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true }));
   app.use(express.static(path.join(__dirname, 'public')));
 
   app.get('/api/health', (_req, res) => {
@@ -56,17 +61,27 @@ function createWebApp() {
     }
   });
 
+  app.post('/webhook/billplz', async (req, res) => {
+    try {
+      const result = await handleBillplzCallback({ ...req.body, ...req.query });
+      res.json(result);
+    } catch (err) {
+      console.error('Billplz webhook error:', err);
+      res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
   app.get('/api/session', (req, res) => {
     const token = req.query.token;
     const user = token ? findUserByToken(token) : null;
 
     if (user) {
-      res.json({ token: user.access_token, source: user.telegram_id ? 'telegram' : 'web' });
+      res.json({ token: user.accessToken, source: user.telegramId ? 'telegram' : 'web' });
       return;
     }
 
     const newUser = getOrCreateWebUser(null);
-    res.json({ token: newUser.access_token, source: 'web' });
+    res.json({ token: newUser.accessToken, source: 'web' });
   });
 
   app.use('/api', (req, res, next) => {
@@ -87,10 +102,49 @@ function createWebApp() {
     next();
   });
 
+  app.get('/api/wallet', async (req, res) => {
+    try {
+      const wallet = await getWalletInfo(req.user.id);
+      res.json(wallet);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/wallet/transactions', (req, res) => {
+    res.json({ transactions: listTransactions(req.user.id, { limit: 50 }) });
+  });
+
+  app.get('/api/exchange', async (_req, res) => {
+    try {
+      res.json(await getExchangeInfo());
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/topup', async (req, res) => {
+    try {
+      const { method, packageId, amountMyr } = req.body || {};
+      const result = await createTopup(req.user.id, { method, packageId, amountMyr });
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/api/domains', async (_req, res) => {
     try {
       const domains = await getDomains();
-      res.json({ domains: Array.isArray(domains) ? domains : [] });
+      const list = Array.isArray(domains) ? domains : [];
+      const withGems = await Promise.all(
+        list.map(async (d) => {
+          const name = d.name || d.domain;
+          const { costGems } = await estimateOrderCost(name);
+          return { ...d, costGems };
+        })
+      );
+      res.json({ domains: withGems });
     } catch (err) {
       res.status(502).json({ error: err.message });
     }
@@ -121,10 +175,17 @@ function createWebApp() {
     try {
       const site = (req.body?.site || config.defaultSite).trim();
       const domain = (req.body?.domain || config.defaultDomain).trim();
-      const remote = await orderEmail(site, domain);
-      const saved = saveOrder(req.user.id, remote);
-      res.status(201).json({ order: saved });
+      const { order, gemsCharged } = await placeOrder(req.user.id, site, domain);
+      res.status(201).json({ order, gemsCharged });
     } catch (err) {
+      if (err.code === 'INSUFFICIENT_GEMS') {
+        res.status(402).json({
+          error: err.message,
+          requiredGems: err.requiredGems,
+          balance: err.balance,
+        });
+        return;
+      }
       res.status(502).json({ error: err.message });
     }
   });
@@ -138,8 +199,7 @@ function createWebApp() {
     }
 
     try {
-      await cancelEmail(order.heroId);
-      saveOrder(req.user.id, { ...order, heroId: order.heroId, status: 'CANCELLED' });
+      await cancelOrderWithRefund(req.user.id, order);
       res.json({ ok: true });
     } catch (err) {
       res.status(502).json({ error: err.message });

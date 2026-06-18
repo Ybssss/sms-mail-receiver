@@ -8,11 +8,13 @@ function generateToken() {
 }
 
 function findUserByTelegramId(telegramId) {
-  return getDb().prepare('SELECT * FROM users WHERE telegram_id = ?').get(String(telegramId));
+  const row = getDb().prepare('SELECT * FROM users WHERE telegram_id = ?').get(String(telegramId));
+  return mapUser(row);
 }
 
 function findUserByToken(token) {
-  return getDb().prepare('SELECT * FROM users WHERE access_token = ?').get(token);
+  const row = getDb().prepare('SELECT * FROM users WHERE access_token = ?').get(token);
+  return mapUser(row);
 }
 
 function getOrCreateTelegramUser(telegramId) {
@@ -25,7 +27,7 @@ function getOrCreateTelegramUser(telegramId) {
     .prepare('INSERT INTO users (telegram_id, access_token) VALUES (?, ?)')
     .run(String(telegramId), token);
 
-  return db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+  return mapUser(db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
 }
 
 function getOrCreateWebUser(token) {
@@ -40,7 +42,18 @@ function getOrCreateWebUser(token) {
     .prepare('INSERT INTO users (telegram_id, access_token) VALUES (NULL, ?)')
     .run(newToken);
 
-  return db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+  return mapUser(db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
+}
+
+function mapUser(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    telegramId: row.telegram_id,
+    accessToken: row.access_token,
+    gemsBalance: row.gems_balance ?? 0,
+    createdAt: row.created_at,
+  };
 }
 
 function mapOrder(row) {
@@ -56,13 +69,14 @@ function mapOrder(row) {
     message: row.message,
     cost: row.cost,
     currency: row.currency,
+    gemsCharged: row.gems_charged,
     receivedAt: row.received_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
-function saveOrder(userId, order) {
+function saveOrder(userId, order, { gemsCharged } = {}) {
   const db = getDb();
   const existing = db.prepare('SELECT * FROM email_orders WHERE hero_id = ?').get(order.heroId);
 
@@ -70,6 +84,7 @@ function saveOrder(userId, order) {
     db.prepare(`
       UPDATE email_orders
       SET email = ?, status = ?, value = ?, message = ?, cost = ?, currency = ?,
+          gems_charged = COALESCE(?, gems_charged),
           received_at = COALESCE(?, received_at), updated_at = datetime('now')
       WHERE hero_id = ?
     `).run(
@@ -79,6 +94,7 @@ function saveOrder(userId, order) {
       order.message,
       order.cost,
       order.currency,
+      gemsCharged ?? existing.gems_charged,
       order.value ? new Date().toISOString() : null,
       order.heroId
     );
@@ -86,8 +102,8 @@ function saveOrder(userId, order) {
   }
 
   const result = db.prepare(`
-    INSERT INTO email_orders (user_id, hero_id, site, domain, email, status, value, message, cost, currency, received_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO email_orders (user_id, hero_id, site, domain, email, status, value, message, cost, currency, gems_charged, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     userId,
     order.heroId,
@@ -99,6 +115,7 @@ function saveOrder(userId, order) {
     order.message,
     order.cost,
     order.currency,
+    gemsCharged ?? null,
     order.value ? new Date().toISOString() : null
   );
 
