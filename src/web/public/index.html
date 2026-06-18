@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hero-SMS Mail Receiver</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="bg-grid"></div>
+
+    <main class="container">
+      <header class="header">
+        <div>
+          <p class="eyebrow">Hero-SMS · Zero-delay receiver</p>
+          <h1>Mail inbox</h1>
+          <p class="subtitle">Webhook + 2s polling. Render keep-alive prevents cold starts.</p>
+        </div>
+        <div class="header-actions">
+          <span class="status-pill" id="live-status">Connecting…</span>
+          <a class="btn-secondary" href="https://t.me/" id="telegram-link" target="_blank" rel="noopener">Telegram bot</a>
+        </div>
+      </header>
+
+      <section class="stats">
+        <article class="stat-card">
+          <span class="stat-label">Poll interval</span>
+          <strong id="poll-interval">—</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Keep-alive</span>
+          <strong id="keepalive-status">—</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Webhook URL</span>
+          <code id="webhook-url" class="mono">—</code>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>Order email</h2>
+        <form id="order-form" class="order-form">
+          <input id="site-input" type="text" placeholder="Site (e.g. telegram.com)" required />
+          <input id="domain-input" type="text" placeholder="Domain (e.g. gmail.com)" required />
+          <button type="submit">Order now</button>
+        </form>
+        <p class="hint">Use the same site/domain as in Hero-SMS dashboard. Codes appear here and in Telegram instantly.</p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Active orders</h2>
+          <button type="button" id="refresh-btn" class="btn-secondary">Refresh</button>
+        </div>
+        <div id="orders-list" class="orders-list"></div>
+        <p id="empty-state" class="empty-state">No orders yet. Order above or use /order in Telegram.</p>
+      </section>
+
+      <section class="panel token-panel" id="token-panel">
+        <label for="token-input">Access token (from /web in Telegram)</label>
+        <div class="token-row">
+          <input id="token-input" type="text" placeholder="Paste token to sync Telegram orders" />
+          <button type="button" id="token-save">Connect</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

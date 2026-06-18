@@ -1,0 +1,21 @@
+{
+  "name": "sms-mail-receiver",
+  "version": "2.0.0",
+  "description": "Hero-SMS automated mail receiver with Telegram alerts, web dashboard, and Render keep-alive",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "github:first": "git init && git add -A && git commit -m \"first commit\" && git branch -M main && git remote add origin https://github.com/Ybssss/sms-mail-receiver.git && git push -u origin main",
+    "github:push": "git add -A && git commit -m \"update\" && git push origin main"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "telegraf": "^4.16.3"
+  }
+}

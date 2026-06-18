@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: sms-mail-receiver
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HERO_SMS_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: DATABASE_PATH
+        value: /var/data/mail.db
+      - key: POLL_INTERVAL_MS
+        value: "2000"
+      - key: KEEPALIVE_INTERVAL_MS
+        value: "600000"
+    disk:
+      name: mail-data
+      mountPath: /var/data
+      sizeGB: 1
