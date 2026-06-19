@@ -1,4 +1,4 @@
-BAOconst { config } = require("../../config");
+const { config } = require("../../config");
 
 function getManualPaymentInfo(provider) {
   if (provider === "manual_tng") {

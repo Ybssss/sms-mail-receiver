@@ -1,4 +1,4 @@
-to aconst { Telegraf, Markup } = require("telegraf");
+const { Telegraf, Markup } = require("telegraf");
 const { config } = require("../config");
 const { getDomains, getEmail } = require("../services/heroSms");
 const {
