@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+k<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -11,8 +11,9 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/style.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
-  <body>
+  <body class="tg-webapp">
     <div class="bg-grid"></div>
 
     <main class="container">
@@ -20,12 +21,22 @@
         <div>
           <p class="eyebrow">Hero-SMS · Gems wallet</p>
           <h1>Mail inbox</h1>
-          <p class="subtitle">Top up gems, order emails, receive codes instantly via webhook + 2s polling.</p>
+          <p class="subtitle">
+            Top up gems, order emails, receive codes instantly via webhook + 2s
+            polling.
+          </p>
         </div>
         <div class="header-actions">
           <span class="status-pill gems-pill" id="gems-balance">💎 —</span>
           <span class="status-pill" id="live-status">Connecting…</span>
-          <a class="btn-secondary" href="https://t.me/" id="telegram-link" target="_blank" rel="noopener">Telegram bot</a>
+          <a
+            class="btn-secondary"
+            href="https://t.me/"
+            id="telegram-link"
+            target="_blank"
+            rel="noopener"
+            >Telegram bot</a
+          >
         </div>
       </header>
 
@@ -46,43 +57,103 @@
 
       <section class="panel" id="topup-panel">
         <h2>Top up gems</h2>
-        <div id="packages-grid" class="packages-grid"></div>
         <div class="custom-topup">
-          <input id="custom-myr" type="number" min="5" step="1" placeholder="Custom RM amount" />
+          <input
+            id="custom-myr"
+            type="number"
+            min="5"
+            step="1"
+            placeholder="Enter RM amount (min RM 5)"
+          />
           <select id="topup-method"></select>
           <button type="button" id="custom-topup-btn">Top up</button>
         </div>
         <p class="hint" id="topup-result"></p>
-        <p class="hint">Billplz supports FPX, card, TnG, GrabPay → settles to your bank. Manual TnG/bank goes directly to your accounts.</p>
+        <p class="hint" id="processing-fee-hint" style="display: none">
+          * A 3.5% processing fee is added for Billplz payments (FPX, Card, TnG,
+          GrabPay).
+        </p>
+        <p class="hint">
+          Billplz supports FPX, card, TnG, GrabPay → settles to your bank.
+          Manual TnG/bank goes directly to your accounts.
+        </p>
       </section>
 
       <section class="panel">
         <h2>Order email</h2>
         <form id="order-form" class="order-form">
-          <input id="site-input" type="text" placeholder="Site (e.g. telegram.com)" required />
-          <input id="domain-input" type="text" placeholder="Domain (e.g. gmail.com)" required />
+          <input
+            id="site-input"
+            type="text"
+            placeholder="Site (e.g. telegram.com)"
+            required
+          />
+          <input
+            id="domain-input"
+            type="text"
+            placeholder="Domain (e.g. gmail.com)"
+            required
+          />
           <button type="submit">Order now</button>
         </form>
-        <p class="hint" id="order-cost-hint">Cost in gems shown after domain load.</p>
+        <p class="hint" id="order-cost-hint">
+          Cost in gems shown after domain load.
+        </p>
       </section>
 
       <section class="panel">
         <div class="panel-head">
           <h2>Active orders</h2>
-          <button type="button" id="refresh-btn" class="btn-secondary">Refresh</button>
+          <button type="button" id="refresh-btn" class="btn-secondary">
+            Refresh
+          </button>
         </div>
         <div id="orders-list" class="orders-list"></div>
-        <p id="empty-state" class="empty-state">No orders yet. Top up gems and order above.</p>
+        <p id="empty-state" class="empty-state">
+          No orders yet. Top up gems and order above.
+        </p>
       </section>
 
       <section class="panel token-panel" id="token-panel">
         <label for="token-input">Access token (from /web in Telegram)</label>
         <div class="token-row">
-          <input id="token-input" type="text" placeholder="Paste token to sync Telegram orders" />
+          <input
+            id="token-input"
+            type="text"
+            placeholder="Paste token to sync Telegram orders"
+          />
           <button type="button" id="token-save">Connect</button>
         </div>
       </section>
+
+      <section class="panel admin-panel" id="admin-panel" style="display: none">
+        <div class="panel-head">
+          <h2>🔐 Admin — Pending Approvals</h2>
+          <button type="button" id="refresh-admin-btn" class="btn-secondary">
+            Refresh
+          </button>
+        </div>
+        <div id="admin-approvals-list" class="orders-list"></div>
+        <p id="admin-empty-state" class="empty-state">
+          No pending manual payments.
+        </p>
+      </section>
     </main>
+
+    <!-- Confirmation modal for misclick prevention -->
+    <div id="confirm-modal" class="modal-overlay" style="display: none">
+      <div class="modal-box">
+        <p id="confirm-message"></p>
+        <div class="modal-actions">
+          <button type="button" id="confirm-yes" class="btn-danger">
+            Yes, confirm
+          </button>
+          <button type="button" id="confirm-no" class="btn-secondary">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
 
     <script src="/app.js"></script>
   </body>

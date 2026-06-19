@@ -13,22 +13,37 @@
   --radius: 16px;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
   color: var(--text);
   background: var(--bg);
+}
+
+body.in-telegram .container {
+  width: min(960px, calc(100% - 24px));
+  margin: 16px auto 32px;
+}
+
+body.in-telegram .header-actions .btn-secondary {
+  display: none;
+}
+
+body.in-telegram .token-panel {
+  display: none;
 }
 
 .bg-grid {
   position: fixed;
   inset: 0;
   background-image:
-    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
   background-size: 40px 40px;
   pointer-events: none;
 }
@@ -87,8 +102,14 @@ h2 {
   font-size: 0.85rem;
 }
 
-.status-pill.live { background: rgba(74, 222, 128, 0.12); border-color: rgba(74, 222, 128, 0.3); }
-.status-pill.error { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.3); }
+.status-pill.live {
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.3);
+}
+.status-pill.error {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.3);
+}
 
 .stats {
   display: grid;
@@ -140,7 +161,7 @@ h2 {
   gap: 10px;
 }
 
-input[type='text'] {
+input[type="text"] {
   width: 100%;
   padding: 13px 14px;
   border-radius: 12px;
@@ -180,12 +201,15 @@ button {
   font-weight: 600;
 }
 
-.hint, .empty-state {
+.hint,
+.empty-state {
   color: var(--muted);
   font-size: 0.9rem;
 }
 
-.empty-state.hidden { display: none; }
+.empty-state.hidden {
+  display: none;
+}
 
 .orders-list {
   display: grid;
@@ -272,41 +296,13 @@ button {
   font-weight: 700;
 }
 
-.packages-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.package-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 14px;
-  border-radius: 12px;
-  background: var(--surface-strong);
-  border: 1px solid var(--border);
-  color: var(--text);
-  cursor: pointer;
-  min-height: auto;
-  text-align: left;
-}
-
-.package-card span {
-  color: var(--muted);
-  font-size: 0.88rem;
-  font-weight: 500;
-}
-
 .custom-topup {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
   gap: 10px;
 }
 
-input[type='number'],
+input[type="number"],
 select {
   width: 100%;
   padding: 13px 14px;
@@ -317,7 +313,8 @@ select {
   font: inherit;
 }
 
-select:focus, input[type='number']:focus {
+select:focus,
+input[type="number"]:focus {
   outline: 2px solid rgba(34, 211, 238, 0.35);
 }
 
@@ -325,8 +322,78 @@ select:focus, input[type='number']:focus {
   color: var(--accent);
 }
 
+/* ── Admin panel ──────────────────────────────────────────────── */
+.admin-panel {
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.approve-btn {
+  background: linear-gradient(135deg, var(--success), #22c55e);
+  color: #042028;
+}
+
+.reject-btn {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+/* ── Confirmation modal ───────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-box {
+  background: #1a1f35;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  max-width: 400px;
+  width: 90%;
+}
+
+.modal-box p {
+  margin: 0 0 20px;
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.btn-danger {
+  background: linear-gradient(135deg, var(--danger), #dc2626);
+  color: #fff;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 18px;
+  min-height: 46px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 @media (max-width: 760px) {
-  .header, .stats { grid-template-columns: 1fr; display: grid; }
-  .header-actions { align-items: stretch; }
-  .order-form, .token-row, .custom-topup { grid-template-columns: 1fr; }
+  .header,
+  .stats {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+  .header-actions {
+    align-items: stretch;
+  }
+  .order-form,
+  .token-row,
+  .custom-topup {
+    grid-template-columns: 1fr;
+  }
 }

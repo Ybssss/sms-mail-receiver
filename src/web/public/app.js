@@ -1,66 +1,108 @@
-const STORAGE_KEY = 'hero_mail_token';
-
-const orderForm = document.getElementById('order-form');
-const siteInput = document.getElementById('site-input');
-const domainInput = document.getElementById('domain-input');
-const ordersList = document.getElementById('orders-list');
-const emptyState = document.getElementById('empty-state');
-const liveStatus = document.getElementById('live-status');
-const pollIntervalEl = document.getElementById('poll-interval');
-const gemsBalanceEl = document.getElementById('gems-balance');
-const gemsPerMyrEl = document.getElementById('gems-per-myr');
-const usdMyrEl = document.getElementById('usd-myr');
-const packagesGrid = document.getElementById('packages-grid');
-const topupMethodSelect = document.getElementById('topup-method');
-const customMyrInput = document.getElementById('custom-myr');
-const customTopupBtn = document.getElementById('custom-topup-btn');
-const topupResult = document.getElementById('topup-result');
-const orderCostHint = document.getElementById('order-cost-hint');
-const refreshBtn = document.getElementById('refresh-btn');
-const tokenPanel = document.getElementById('token-panel');
-const tokenInput = document.getElementById('token-input');
-const tokenSave = document.getElementById('token-save');
-const telegramLink = document.getElementById('telegram-link');
-
-let token = '';
+const STORAGE_KEY = "hero_mail_token";
+let token = "";
 let pollTimer = null;
 let refreshMs = 2000;
 let wallet = null;
 let domainCosts = {};
+let tgWebApp = null;
+
+const orderForm = document.getElementById("order-form");
+const siteInput = document.getElementById("site-input");
+const domainInput = document.getElementById("domain-input");
+const ordersList = document.getElementById("orders-list");
+const emptyState = document.getElementById("empty-state");
+const liveStatus = document.getElementById("live-status");
+const pollIntervalEl = document.getElementById("poll-interval");
+const gemsBalanceEl = document.getElementById("gems-balance");
+const gemsPerMyrEl = document.getElementById("gems-per-myr");
+const usdMyrEl = document.getElementById("usd-myr");
+const topupMethodSelect = document.getElementById("topup-method");
+const customMyrInput = document.getElementById("custom-myr");
+const customTopupBtn = document.getElementById("custom-topup-btn");
+const topupResult = document.getElementById("topup-result");
+const orderCostHint = document.getElementById("order-cost-hint");
+const refreshBtn = document.getElementById("refresh-btn");
+const tokenPanel = document.getElementById("token-panel");
+const tokenInput = document.getElementById("token-input");
+const tokenSave = document.getElementById("token-save");
+const telegramLink = document.getElementById("telegram-link");
+
+function initTelegramWebApp() {
+  tgWebApp = window.Telegram?.WebApp;
+  if (!tgWebApp?.initData) return false;
+
+  tgWebApp.ready();
+  tgWebApp.expand();
+
+  const theme = tgWebApp.themeParams || {};
+  const root = document.documentElement;
+  if (theme.bg_color) root.style.setProperty("--bg", theme.bg_color);
+  if (theme.secondary_bg_color)
+    root.style.setProperty("--surface", theme.secondary_bg_color);
+  if (theme.text_color) root.style.setProperty("--text", theme.text_color);
+  if (theme.hint_color) root.style.setProperty("--muted", theme.hint_color);
+  if (theme.button_color)
+    root.style.setProperty("--accent-strong", theme.button_color);
+  if (theme.link_color) root.style.setProperty("--accent", theme.link_color);
+
+  document.body.classList.add("in-telegram");
+  return true;
+}
+
+async function authFromTelegram() {
+  if (!tgWebApp?.initData) return false;
+
+  const response = await fetch("/api/telegram-auth", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: tgWebApp.initData,
+  });
+
+  if (!response.ok) return false;
+
+  const data = await response.json();
+  setToken(data.token);
+  tokenPanel.hidden = true;
+
+  if (data.firstName) {
+    const subtitle = document.querySelector(".subtitle");
+    if (subtitle)
+      subtitle.textContent = `Hi ${data.firstName} — top up gems, order emails, receive codes instantly.`;
+  }
+
+  return true;
+}
 
 function fmt(n) {
-  return Number(n).toLocaleString('en-MY');
+  return Number(n).toLocaleString("en-MY");
 }
 
 function getTokenFromUrl() {
-  return new URLSearchParams(window.location.search).get('token');
+  return new URLSearchParams(window.location.search).get("token");
 }
 
-function setToken(nextToken, updateUrl = true) {
+function setToken(nextToken) {
   token = nextToken;
-  localStorage.setItem(STORAGE_KEY, token);
-
-  if (updateUrl) {
-    const url = new URL(window.location.href);
-    url.searchParams.set('token', token);
-    window.history.replaceState({}, '', url);
+  try {
+    sessionStorage.setItem(STORAGE_KEY, token);
+  } catch {
+    // sessionStorage may be restricted in some embedded contexts
   }
-
-  tokenPanel.hidden = Boolean(getTokenFromUrl() || localStorage.getItem(STORAGE_KEY));
+  tokenPanel.hidden = Boolean(token);
 }
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
       ...(options.headers || {}),
     },
   });
 
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Request failed');
+  if (!response.ok) throw new Error(data.error || "Request failed");
   return data;
 }
 
@@ -70,81 +112,80 @@ function renderWallet(w) {
   gemsPerMyrEl.textContent = fmt(w.exchange.gemsPerMyr);
   usdMyrEl.textContent = w.exchange.usdMyr.toFixed(4);
 
-  packagesGrid.innerHTML = '';
-  w.packages.forEach((pkg) => {
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'package-card';
-    card.innerHTML = `<strong>${pkg.name}</strong><span>RM ${pkg.priceMyr}</span>`;
-    card.addEventListener('click', () => topupPackage(pkg.id));
-    packagesGrid.appendChild(card);
-  });
-
-  topupMethodSelect.innerHTML = '';
+  topupMethodSelect.innerHTML = "";
   w.methods.forEach((m) => {
-    if (m.id === 'telegram_stars') return;
-    const opt = document.createElement('option');
+    if (m.id === "telegram_stars") return;
+    const opt = document.createElement("option");
     opt.value = m.id;
     opt.textContent = m.name;
     topupMethodSelect.appendChild(opt);
   });
+
+  // Show processing fee hint if Billplz is an option
+  const feeHint = document.getElementById("processing-fee-hint");
+  if (feeHint) {
+    const hasBillplz = w.methods.some((m) => m.id === "billplz");
+    feeHint.style.display = hasBillplz ? "block" : "none";
+  }
 }
 
 async function loadWallet() {
-  const w = await api('/api/wallet');
+  const w = await api("/api/wallet");
   renderWallet(w);
 }
 
 function renderOrders(orders) {
-  ordersList.innerHTML = '';
+  ordersList.innerHTML = "";
 
   orders.forEach((order) => {
-    const card = document.createElement('article');
-    card.className = `order-card${order.value ? ' received' : ''}`;
+    const card = document.createElement("article");
+    card.className = `order-card${order.value ? " received" : ""}`;
 
-    const top = document.createElement('div');
-    top.className = 'order-top';
+    const top = document.createElement("div");
+    top.className = "order-top";
 
-    const email = document.createElement('div');
-    email.className = 'order-email';
+    const email = document.createElement("div");
+    email.className = "order-email";
     email.textContent = order.email || `${order.domain} (pending)`;
 
-    const status = document.createElement('span');
-    status.className = `order-status${order.value ? ' received' : ''}`;
-    status.textContent = order.value ? 'RECEIVED' : order.status;
+    const status = document.createElement("span");
+    status.className = `order-status${order.value ? " received" : ""}`;
+    status.textContent = order.value ? "RECEIVED" : order.status;
 
     top.append(email, status);
 
-    const meta = document.createElement('div');
-    meta.className = 'order-meta';
-    const gemsPart = order.gemsCharged ? ` · ${fmt(order.gemsCharged)} gems` : '';
+    const meta = document.createElement("div");
+    meta.className = "order-meta";
+    const gemsPart = order.gemsCharged
+      ? ` · ${fmt(order.gemsCharged)} gems`
+      : "";
     meta.textContent = `#${order.id} · ${order.site} · Hero ID ${order.heroId}${gemsPart}`;
 
     card.append(top, meta);
 
     if (order.value) {
-      const value = document.createElement('div');
-      value.className = 'order-value';
+      const value = document.createElement("div");
+      value.className = "order-value";
       value.textContent = order.value;
       card.appendChild(value);
     }
 
     if (order.message) {
-      const message = document.createElement('div');
-      message.className = 'order-meta';
+      const message = document.createElement("div");
+      message.className = "order-meta";
       message.textContent = order.message;
       card.appendChild(message);
     }
 
-    if (!order.value && order.status !== 'CANCELLED') {
-      const actions = document.createElement('div');
-      actions.className = 'order-actions';
+    if (!order.value && order.status !== "CANCELLED") {
+      const actions = document.createElement("div");
+      actions.className = "order-actions";
 
-      const cancelBtn = document.createElement('button');
-      cancelBtn.type = 'button';
-      cancelBtn.className = 'cancel-btn';
-      cancelBtn.textContent = 'Cancel';
-      cancelBtn.addEventListener('click', () => cancelOrder(order.id));
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "cancel-btn";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", () => cancelOrder(order.id));
 
       actions.appendChild(cancelBtn);
       card.appendChild(actions);
@@ -153,43 +194,44 @@ function renderOrders(orders) {
     ordersList.appendChild(card);
   });
 
-  emptyState.classList.toggle('hidden', orders.length > 0);
+  emptyState.classList.toggle("hidden", orders.length > 0);
 }
 
 async function loadOrders() {
-  const data = await api('/api/orders');
+  const data = await api("/api/orders");
   renderOrders(data.orders);
   liveStatus.textContent = `Live · ${data.orders.length} orders`;
-  liveStatus.className = 'status-pill live';
+  liveStatus.className = "status-pill live";
 }
 
 async function loadHealth() {
-  const health = await fetch('/api/health').then((res) => res.json());
+  const health = await fetch("/api/health").then((res) => res.json());
   pollIntervalEl.textContent = `${health.pollIntervalMs || refreshMs}ms`;
 }
 
 async function loadConfig() {
-  const config = await fetch('/api/config').then((res) => res.json());
+  const config = await fetch("/api/config").then((res) => res.json());
   refreshMs = config.pollIntervalMs || 2000;
   pollIntervalEl.textContent = `${refreshMs}ms`;
 
   if (config.defaultSite) siteInput.value = config.defaultSite;
   if (config.defaultDomain) domainInput.value = config.defaultDomain;
-  if (config.botUsername) telegramLink.href = `https://t.me/${config.botUsername}`;
+  if (config.botUsername)
+    telegramLink.href = `https://t.me/${config.botUsername}`;
 
   await loadDomainCosts();
 }
 
 async function loadDomainCosts() {
   try {
-    const data = await api('/api/domains');
+    const data = await api("/api/domains");
     domainCosts = {};
     data.domains.forEach((d) => {
       domainCosts[d.name || d.domain] = d.costGems;
     });
     updateOrderCostHint();
   } catch {
-    orderCostHint.textContent = 'Could not load domain prices.';
+    orderCostHint.textContent = "Could not load domain prices.";
   }
 }
 
@@ -198,30 +240,27 @@ function updateOrderCostHint() {
   const cost = domainCosts[domain];
   orderCostHint.textContent = cost
     ? `Estimated cost: ${fmt(cost)} gems for ${domain}`
-    : 'Select a domain to see gem cost.';
-}
-
-async function topupPackage(packageId) {
-  const method = topupMethodSelect.value || wallet?.methods?.[0]?.id;
-  if (!method) {
-    topupResult.textContent = 'No payment methods configured.';
-    return;
-  }
-  await runTopup({ method, packageId });
+    : "Select a domain to see gem cost.";
 }
 
 async function runTopup(body) {
-  topupResult.textContent = 'Creating payment…';
+  topupResult.textContent = "Creating payment…";
   try {
-    const result = await api('/api/topup', { method: 'POST', body: JSON.stringify(body) });
+    const result = await api("/api/topup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
 
     if (result.billUrl) {
       topupResult.innerHTML = `Pay via Billplz (FPX/card/TnG): <a href="${result.billUrl}" target="_blank" rel="noopener">Open payment</a>`;
-      window.open(result.billUrl, '_blank');
+      window.open(result.billUrl, "_blank");
     } else if (result.instructions) {
-      topupResult.textContent = [...result.instructions, `Payment #${result.paymentId}`].join(' · ');
+      topupResult.textContent = [
+        ...result.instructions,
+        `Payment #${result.paymentId}`,
+      ].join(" · ");
     } else {
-      topupResult.textContent = result.note || 'Payment created.';
+      topupResult.textContent = result.note || "Payment created.";
     }
   } catch (err) {
     topupResult.textContent = err.message;
@@ -234,75 +273,103 @@ async function createOrder(event) {
   const domain = domainInput.value.trim();
   if (!site || !domain) return;
 
-  orderForm.querySelector('button').disabled = true;
+  orderForm.querySelector("button").disabled = true;
   try {
-    await api('/api/orders', {
-      method: 'POST',
+    await api("/api/orders", {
+      method: "POST",
       body: JSON.stringify({ site, domain }),
     });
     await loadOrders();
     await loadWallet();
   } catch (err) {
     liveStatus.textContent = err.message;
-    liveStatus.className = 'status-pill error';
+    liveStatus.className = "status-pill error";
   } finally {
-    orderForm.querySelector('button').disabled = false;
+    orderForm.querySelector("button").disabled = false;
   }
 }
 
 async function cancelOrder(id) {
   try {
-    await api(`/api/orders/${id}`, { method: 'DELETE' });
+    await api(`/api/orders/${id}`, { method: "DELETE" });
     await loadOrders();
     await loadWallet();
   } catch (err) {
     liveStatus.textContent = err.message;
-    liveStatus.className = 'status-pill error';
+    liveStatus.className = "status-pill error";
   }
 }
 
 async function initSession() {
-  const urlToken = getTokenFromUrl();
-  const savedToken = localStorage.getItem(STORAGE_KEY);
-  const query = urlToken
-    ? `?token=${encodeURIComponent(urlToken)}`
-    : savedToken
-      ? `?token=${encodeURIComponent(savedToken)}`
-      : '';
+  const inTelegram = initTelegramWebApp();
+
+  if (inTelegram && (await authFromTelegram())) {
+    tokenInput.value = token;
+    return;
+  }
+
+  const savedToken = (() => {
+    try {
+      return sessionStorage.getItem(STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  })();
+  const query = savedToken ? `?token=${encodeURIComponent(savedToken)}` : "";
 
   const session = await fetch(`/api/session${query}`).then((res) => res.json());
-  setToken(session.token, false);
+  setToken(session.token);
   tokenInput.value = token;
 
-  if (urlToken || savedToken) tokenPanel.hidden = true;
+  if (savedToken) tokenPanel.hidden = true;
 }
 
 function startAutoRefresh() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => {
     loadOrders().catch(() => {
-      liveStatus.textContent = 'Reconnecting…';
-      liveStatus.className = 'status-pill error';
+      liveStatus.textContent = "Reconnecting…";
+      liveStatus.className = "status-pill error";
     });
     loadWallet().catch(() => {});
   }, refreshMs);
 }
 
-orderForm.addEventListener('submit', createOrder);
-refreshBtn.addEventListener('click', () => {
+orderForm.addEventListener("submit", createOrder);
+refreshBtn.addEventListener("click", () => {
   loadOrders();
   loadWallet();
 });
-domainInput.addEventListener('input', updateOrderCostHint);
+domainInput.addEventListener("input", updateOrderCostHint);
 
-customTopupBtn.addEventListener('click', () => {
+function updateCustomTopupHint() {
+  const amountMyr = parseFloat(customMyrInput.value);
+  if (!amountMyr || !wallet?.billplzFee) {
+    customMyrInput.setAttribute("placeholder", "Enter RM amount (min RM 5)");
+    return;
+  }
+  const fee = amountMyr * wallet.billplzFee;
+  const total = amountMyr + fee;
+  customMyrInput.setAttribute(
+    "placeholder",
+    `Enter RM amount (min RM 5) — total with fee: RM ${total.toFixed(2)}`,
+  );
+}
+
+customTopupBtn.addEventListener("click", () => {
   const amountMyr = parseFloat(customMyrInput.value);
   const method = topupMethodSelect.value;
   if (!amountMyr || !method) return;
+  if (amountMyr < 5) {
+    topupResult.textContent = "Minimum top-up is RM 5";
+    return;
+  }
   runTopup({ method, amountMyr });
 });
 
-tokenSave.addEventListener('click', async () => {
+customMyrInput.addEventListener("input", updateCustomTopupHint);
+
+tokenSave.addEventListener("click", async () => {
   const value = tokenInput.value.trim();
   if (!value) return;
   setToken(value);
@@ -311,23 +378,148 @@ tokenSave.addEventListener('click', async () => {
     await loadOrders();
     startAutoRefresh();
   } catch {
-    localStorage.removeItem(STORAGE_KEY);
-    liveStatus.textContent = 'Invalid token';
-    liveStatus.className = 'status-pill error';
+    try {
+      sessionStorage.removeItem(STORAGE_KEY);
+    } catch {}
+    liveStatus.textContent = "Invalid token";
+    liveStatus.className = "status-pill error";
   }
 });
 
 initSession()
   .then(loadConfig)
   .then(loadHealth)
+  .then(() => {
+    // Clean token from URL if present (security: don't expose in browser history)
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("token")) {
+      url.searchParams.delete("token");
+      window.history.replaceState({}, "", url);
+    }
+  })
   .then(loadWallet)
   .then(loadOrders)
   .then(startAutoRefresh)
   .catch((err) => {
     liveStatus.textContent = err.message;
-    liveStatus.className = 'status-pill error';
+    liveStatus.className = "status-pill error";
   });
 
-if (window.location.hash === '#topup' || new URLSearchParams(window.location.search).get('topup')) {
-  document.getElementById('topup-panel')?.scrollIntoView({ behavior: 'smooth' });
+// ── Confirmation modal (misclick prevention) ────────────────────
+let pendingAction = null;
+
+function showConfirm(message, onConfirm) {
+  pendingAction = onConfirm;
+  document.getElementById("confirm-message").textContent = message;
+  document.getElementById("confirm-modal").style.display = "flex";
+}
+
+document.getElementById("confirm-yes").addEventListener("click", () => {
+  document.getElementById("confirm-modal").style.display = "none";
+  if (pendingAction) {
+    const fn = pendingAction;
+    pendingAction = null;
+    fn();
+  }
+});
+
+document.getElementById("confirm-no").addEventListener("click", () => {
+  document.getElementById("confirm-modal").style.display = "none";
+  pendingAction = null;
+});
+
+// Close modal on overlay click
+document.getElementById("confirm-modal").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) {
+    document.getElementById("confirm-modal").style.display = "none";
+    pendingAction = null;
+  }
+});
+
+// ── Admin panel ─────────────────────────────────────────────────
+const adminPanel = document.getElementById("admin-panel");
+const adminApprovalsList = document.getElementById("admin-approvals-list");
+const adminEmptyState = document.getElementById("admin-empty-state");
+const refreshAdminBtn = document.getElementById("refresh-admin-btn");
+
+async function loadAdminPendingPayments() {
+  try {
+    const data = await api("/api/admin/pending-payments");
+    renderAdminPayments(data.payments);
+    adminPanel.style.display = "block";
+  } catch {
+    adminPanel.style.display = "none";
+  }
+}
+
+function renderAdminPayments(payments) {
+  adminApprovalsList.innerHTML = "";
+  adminEmptyState.classList.toggle("hidden", payments.length > 0);
+
+  payments.forEach((p) => {
+    const card = document.createElement("article");
+    card.className = "order-card";
+    card.innerHTML = `
+      <div class="order-top">
+        <div class="order-email">#${p.id} — ${p.provider === "manual_tng" ? "📱 TnG" : "🏦 Bank Transfer"}</div>
+        <span class="order-status">PENDING</span>
+      </div>
+      <div class="order-meta">RM ${p.amountMyr} → ${p.gems.toLocaleString()} gems · User: ${p.telegramId || p.userId}</div>
+      <div class="order-actions">
+        <button type="button" class="approve-btn" data-id="${p.id}">✅ Approve</button>
+        <button type="button" class="reject-btn" data-id="${p.id}">❌ Reject</button>
+      </div>
+    `;
+
+    card.querySelector(".approve-btn").addEventListener("click", () => {
+      showConfirm(
+        `Approve payment #${p.id} for RM ${p.amountMyr} → ${p.gems.toLocaleString()} gems?\nThis will credit the user's account.`,
+        () => adminAction("approve", p.id),
+      );
+    });
+
+    card.querySelector(".reject-btn").addEventListener("click", () => {
+      showConfirm(
+        `Reject payment #${p.id} (RM ${p.amountMyr})?\nThis will cancel the payment and the user will not receive gems.`,
+        () => adminAction("reject", p.id),
+      );
+    });
+
+    adminApprovalsList.appendChild(card);
+  });
+}
+
+async function adminAction(action, paymentId) {
+  try {
+    await api(`/api/admin/${action}-payment`, {
+      method: "POST",
+      body: JSON.stringify({ paymentId }),
+    });
+    await loadAdminPendingPayments();
+    liveStatus.textContent = `Payment #${paymentId} ${action}d`;
+    liveStatus.className = "status-pill live";
+  } catch (err) {
+    liveStatus.textContent = `Admin ${action} failed: ${err.message}`;
+    liveStatus.className = "status-pill error";
+  }
+}
+
+refreshAdminBtn.addEventListener("click", loadAdminPendingPayments);
+
+// Try to load admin panel after wallet loads
+const origLoadWallet = loadWallet;
+loadWallet = async function () {
+  const w = await api("/api/wallet");
+  renderWallet(w);
+  // Try loading admin panel silently
+  loadAdminPendingPayments().catch(() => {});
+};
+
+if (
+  window.location.hash === "#topup" ||
+  new URLSearchParams(window.location.search).get("topup")
+) {
+  document
+    .getElementById("topup-panel")
+    ?.scrollIntoView({ behavior: "smooth" });
 }

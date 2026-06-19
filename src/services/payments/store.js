@@ -1,4 +1,4 @@
-const { getDb } = require('../db/database');
+const { getDb } = require("../../db/database");
 
 function mapPayment(row) {
   if (!row) return null;
@@ -16,24 +16,38 @@ function mapPayment(row) {
   };
 }
 
-function createPayment(userId, { provider, amountMyr, gems, providerRef = null, meta = null }) {
+function createPayment(
+  userId,
+  { provider, amountMyr, gems, providerRef = null, meta = null },
+) {
   const db = getDb();
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO payments (user_id, provider, provider_ref, amount_myr, gems, status, meta)
     VALUES (?, ?, ?, ?, ?, 'pending', ?)
-  `).run(userId, provider, providerRef, amountMyr, gems, meta ? JSON.stringify(meta) : null);
+  `,
+    )
+    .run(
+      userId,
+      provider,
+      providerRef,
+      amountMyr,
+      gems,
+      meta ? JSON.stringify(meta) : null,
+    );
 
   return getPaymentById(result.lastInsertRowid);
 }
 
 function getPaymentById(id) {
-  const row = getDb().prepare('SELECT * FROM payments WHERE id = ?').get(id);
+  const row = getDb().prepare("SELECT * FROM payments WHERE id = ?").get(id);
   return mapPayment(row);
 }
 
 function getPaymentByProviderRef(provider, providerRef) {
   const row = getDb()
-    .prepare('SELECT * FROM payments WHERE provider = ? AND provider_ref = ?')
+    .prepare("SELECT * FROM payments WHERE provider = ? AND provider_ref = ?")
     .get(provider, providerRef);
   return mapPayment(row);
 }
@@ -44,55 +58,66 @@ function updatePayment(id, fields) {
   const values = [];
 
   if (fields.status !== undefined) {
-    sets.push('status = ?');
+    sets.push("status = ?");
     values.push(fields.status);
   }
   if (fields.providerRef !== undefined) {
-    sets.push('provider_ref = ?');
+    sets.push("provider_ref = ?");
     values.push(fields.providerRef);
   }
   if (fields.paidAt !== undefined) {
-    sets.push('paid_at = ?');
+    sets.push("paid_at = ?");
     values.push(fields.paidAt);
   }
   if (fields.meta !== undefined) {
-    sets.push('meta = ?');
+    sets.push("meta = ?");
     values.push(JSON.stringify(fields.meta));
   }
 
   if (!sets.length) return getPaymentById(id);
 
   values.push(id);
-  db.prepare(`UPDATE payments SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+  db.prepare(`UPDATE payments SET ${sets.join(", ")} WHERE id = ?`).run(
+    ...values,
+  );
   return getPaymentById(id);
 }
 
 function listPayments(userId, { limit = 20 } = {}) {
   const rows = getDb()
-    .prepare(`
+    .prepare(
+      `
       SELECT * FROM payments WHERE user_id = ?
       ORDER BY id DESC LIMIT ?
-    `)
+    `,
+    )
     .all(userId, limit);
   return rows.map(mapPayment);
 }
 
 function listPendingManualPayments({ limit = 50 } = {}) {
   const rows = getDb()
-    .prepare(`
+    .prepare(
+      `
       SELECT p.*, u.telegram_id FROM payments p
       JOIN users u ON u.id = p.user_id
       WHERE p.provider IN ('manual_tng', 'manual_bank') AND p.status = 'pending'
       ORDER BY p.id ASC LIMIT ?
-    `)
+    `,
+    )
     .all(limit);
-  return rows.map((row) => ({ ...mapPayment(row), telegramId: row.telegram_id }));
+  return rows.map((row) => ({
+    ...mapPayment(row),
+    telegramId: row.telegram_id,
+  }));
 }
 
 async function listPackages() {
-  const { myrToGems, fetchUsdMyrRate } = require('../exchangeRate');
+  const { myrToGems, fetchUsdMyrRate } = require("../exchangeRate");
   const rows = getDb()
-    .prepare('SELECT * FROM gem_packages WHERE active = 1 ORDER BY sort_order ASC, id ASC')
+    .prepare(
+      "SELECT * FROM gem_packages WHERE active = 1 ORDER BY sort_order ASC, id ASC",
+    )
     .all();
 
   return Promise.all(
@@ -106,7 +131,7 @@ async function listPackages() {
         priceMyr: row.price_myr,
         sortOrder: row.sort_order,
       };
-    })
+    }),
   );
 }
 
