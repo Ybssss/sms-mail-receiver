@@ -1,14 +1,16 @@
-const fs = require('fs');
-const path = require('path');
-const Database = require('better-sqlite3');
-const { config } = require('../config');
+const fs = require("fs");
+const path = require("path");
+const Database = require("better-sqlite3");
+const { config } = require("../config");
 
 let db;
 
 function migrate(dbInstance) {
-  const userCols = dbInstance.prepare('PRAGMA table_info(users)').all();
-  if (!userCols.some((c) => c.name === 'gems_balance')) {
-    dbInstance.exec('ALTER TABLE users ADD COLUMN gems_balance INTEGER NOT NULL DEFAULT 0');
+  const userCols = dbInstance.prepare("PRAGMA table_info(users)").all();
+  if (!userCols.some((c) => c.name === "gems_balance")) {
+    dbInstance.exec(
+      "ALTER TABLE users ADD COLUMN gems_balance INTEGER NOT NULL DEFAULT 0",
+    );
   }
 
   dbInstance.exec(`
@@ -53,16 +55,18 @@ function migrate(dbInstance) {
     CREATE INDEX IF NOT EXISTS idx_gem_transactions_user_id ON gem_transactions(user_id);
   `);
 
-  const pkgCount = dbInstance.prepare('SELECT COUNT(*) AS c FROM gem_packages').get().c;
+  const pkgCount = dbInstance
+    .prepare("SELECT COUNT(*) AS c FROM gem_packages")
+    .get().c;
   if (pkgCount === 0) {
     const insert = dbInstance.prepare(`
       INSERT INTO gem_packages (name, gems, price_myr, sort_order) VALUES (?, ?, ?, ?)
     `);
-    insert.run('RM 5', 0, 5, 1);
-    insert.run('RM 10', 0, 10, 2);
-    insert.run('RM 25', 0, 25, 3);
-    insert.run('RM 50', 0, 50, 4);
-    insert.run('RM 100', 0, 100, 5);
+    insert.run("RM 5", 0, 5, 1);
+    insert.run("RM 10", 0, 10, 2);
+    insert.run("RM 25", 0, 25, 3);
+    insert.run("RM 50", 0, 50, 4);
+    insert.run("RM 100", 0, 100, 5);
   }
 }
 
@@ -73,9 +77,14 @@ function getDb() {
   fs.mkdirSync(dir, { recursive: true });
 
   db = new Database(config.databasePath);
-  db.pragma('journal_mode = WAL');
+  db.pragma("journal_mode = WAL");
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS app_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       telegram_id TEXT UNIQUE,
@@ -110,9 +119,9 @@ function getDb() {
 
   migrate(db);
 
-  const orderCols = db.prepare('PRAGMA table_info(email_orders)').all();
-  if (!orderCols.some((c) => c.name === 'gems_charged')) {
-    db.exec('ALTER TABLE email_orders ADD COLUMN gems_charged INTEGER');
+  const orderCols = db.prepare("PRAGMA table_info(email_orders)").all();
+  if (!orderCols.some((c) => c.name === "gems_charged")) {
+    db.exec("ALTER TABLE email_orders ADD COLUMN gems_charged INTEGER");
   }
 
   return db;

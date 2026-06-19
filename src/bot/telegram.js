@@ -611,7 +611,21 @@ function createBot() {
     }
   });
 
+  // Load saved QR file IDs from DB
+  function getQrFileId(type) {
+    try {
+      const { getDb } = require("../db/database");
+      const row = getDb()
+        .prepare("SELECT value FROM app_config WHERE key = ?")
+        .get(type === "manual_tng" ? "qr_tng_file_id" : "qr_bank_file_id");
+      return row?.value || null;
+    } catch {
+      return null;
+    }
+  }
+
   async function sendManualPayment(ctx, result, title) {
+    const fileId = getQrFileId(result.provider);
     const lines = [
       `${title} — Manual Payment`,
       "",
@@ -620,16 +634,18 @@ function createBot() {
       `Payment ID: #${result.paymentId}`,
     ];
 
-    const extra = {};
-    if (result.qrUrl) {
-      lines.push("");
-      lines.push(`📷 Scan QR to pay: ${result.qrUrl}`);
-      extra.reply_markup = Markup.inlineKeyboard([
-        [Markup.button.url("📷 Open QR Code", result.qrUrl)],
-      ]).reply_markup;
+    const caption = lines.join("\n");
+
+    if (fileId) {
+      try {
+        await ctx.replyWithPhoto(fileId, { caption });
+        return;
+      } catch {
+        // File ID expired or invalid — fall through to text
+      }
     }
 
-    await ctx.reply(lines.join("\n"), extra);
+    await ctx.reply(caption);
   }
 
   bot.action(/^pay_tng_(\d+)$/, async (ctx) => {
@@ -840,6 +856,49 @@ function createBot() {
     } catch (err) {
       await ctx.reply(`Cancel failed: ${err.message}`);
     }
+  });
+
+  // ── QR upload commands (admin only) ───────────────────────────
+  bot.command("setqr_tng", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only.");
+      return;
+    }
+    if (!ctx.message.reply_to_message?.photo) {
+      await ctx.reply(
+        "Reply to a photo with /setqr_tng to set the TnG QR code.",
+      );
+      return;
+    }
+    const fileId = ctx.message.reply_to_message.photo.pop().file_id;
+    const { getDb } = require("../db/database");
+    getDb()
+      .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
+      .run("qr_tng_file_id", fileId);
+    await ctx.reply(
+      "✅ TnG QR code saved! It will be shown to users on manual TnG payments.",
+    );
+  });
+
+  bot.command("setqr_bank", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only.");
+      return;
+    }
+    if (!ctx.message.reply_to_message?.photo) {
+      await ctx.reply(
+        "Reply to a photo with /setqr_bank to set the Bank QR code.",
+      );
+      return;
+    }
+    const fileId = ctx.message.reply_to_message.photo.pop().file_id;
+    const { getDb } = require("../db/database");
+    getDb()
+      .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
+      .run("qr_bank_file_id", fileId);
+    await ctx.reply(
+      "✅ Bank QR code saved! It will be shown to users on manual bank payments.",
+    );
   });
 
   bot.on("pre_checkout_query", async (ctx) => {
