@@ -10,7 +10,7 @@
     "github:push": "node scripts/github-push.js update"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=18 <23"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

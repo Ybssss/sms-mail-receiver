@@ -6,6 +6,8 @@ services:
     buildCommand: npm install
     startCommand: npm start
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: NODE_ENV
         value: production
       - key: HERO_SMS_API_KEY
@@ -42,6 +44,20 @@ services:
         sync: false
       - key: ADMIN_TELEGRAM_IDS
         sync: false
+      - key: MANUAL_TNG_QR_URL
+        sync: false
+      - key: MANUAL_BANK_NAME
+        value: "Hong Leong Bank"
+      - key: MANUAL_BANK_HOLDER
+        value: "TAN YUE BAO"
+      - key: MANUAL_BANK_QR_URL
+        sync: false
+      - key: ALLOW_MANUAL_PAYMENTS
+        value: "true"
+      - key: ALLOW_BILLPLZ
+        value: "true"
+      - key: MYR_PER_STAR
+        value: "0.052"
     disk:
       name: mail-data
       mountPath: /var/data
