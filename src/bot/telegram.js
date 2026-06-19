@@ -612,23 +612,24 @@ function createBot() {
   });
 
   async function sendManualPayment(ctx, result, title) {
-    const caption = [
+    const lines = [
       `${title} — Manual Payment`,
       "",
       ...result.instructions,
       "",
       `Payment ID: #${result.paymentId}`,
-    ].join("\n");
+    ];
 
+    const extra = {};
     if (result.qrUrl) {
-      try {
-        await ctx.replyWithPhoto(result.qrUrl, { caption });
-        return;
-      } catch {
-        // QR URL may not be a direct image (e.g. Google Drive) — fallback to text
-      }
+      lines.push("");
+      lines.push(`📷 Scan QR to pay: ${result.qrUrl}`);
+      extra.reply_markup = Markup.inlineKeyboard([
+        [Markup.button.url("📷 Open QR Code", result.qrUrl)],
+      ]).reply_markup;
     }
-    await ctx.reply(caption);
+
+    await ctx.reply(lines.join("\n"), extra);
   }
 
   bot.action(/^pay_tng_(\d+)$/, async (ctx) => {
