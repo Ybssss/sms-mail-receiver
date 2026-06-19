@@ -3,19 +3,17 @@ let token = "";
 let pollTimer = null;
 let refreshMs = 2000;
 let wallet = null;
-let domainCosts = {};
+let domainList = [];
 let tgWebApp = null;
 
 const orderForm = document.getElementById("order-form");
-const siteInput = document.getElementById("site-input");
-const domainInput = document.getElementById("domain-input");
+const domainSelect = document.getElementById("domain-select");
 const ordersList = document.getElementById("orders-list");
 const emptyState = document.getElementById("empty-state");
 const liveStatus = document.getElementById("live-status");
 const pollIntervalEl = document.getElementById("poll-interval");
 const gemsBalanceEl = document.getElementById("gems-balance");
 const gemsPerMyrEl = document.getElementById("gems-per-myr");
-const usdMyrEl = document.getElementById("usd-myr");
 const topupMethodSelect = document.getElementById("topup-method");
 const customMyrInput = document.getElementById("custom-myr");
 const customTopupBtn = document.getElementById("custom-topup-btn");
@@ -77,10 +75,6 @@ function fmt(n) {
   return Number(n).toLocaleString("en-MY");
 }
 
-function getTokenFromUrl() {
-  return new URLSearchParams(window.location.search).get("token");
-}
-
 function setToken(nextToken) {
   token = nextToken;
   try {
@@ -110,7 +104,6 @@ function renderWallet(w) {
   wallet = w;
   gemsBalanceEl.textContent = `💎 ${fmt(w.balance)} gems`;
   gemsPerMyrEl.textContent = fmt(w.exchange.gemsPerMyr);
-  usdMyrEl.textContent = w.exchange.usdMyr.toFixed(4);
 
   topupMethodSelect.innerHTML = "";
   w.methods.forEach((m) => {
@@ -120,6 +113,15 @@ function renderWallet(w) {
     opt.textContent = m.name;
     topupMethodSelect.appendChild(opt);
   });
+
+  // If no methods, add placeholder
+  if (topupMethodSelect.options.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No payment methods available";
+    opt.disabled = true;
+    topupMethodSelect.appendChild(opt);
+  }
 
   // Show processing fee hint if Billplz is an option
   const feeHint = document.getElementById("processing-fee-hint");
@@ -132,6 +134,20 @@ function renderWallet(w) {
 async function loadWallet() {
   const w = await api("/api/wallet");
   renderWallet(w);
+}
+
+function renderDomains(domains) {
+  domainList = domains;
+  domainSelect.innerHTML = '<option value="">Select a service...</option>';
+
+  // Show domain as service name with gem cost
+  domains.forEach((d) => {
+    const name = d.name || d.domain;
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = `${name} — ${fmt(d.costGems)} gems`;
+    domainSelect.appendChild(opt);
+  });
 }
 
 function renderOrders(orders) {
@@ -159,7 +175,7 @@ function renderOrders(orders) {
     const gemsPart = order.gemsCharged
       ? ` · ${fmt(order.gemsCharged)} gems`
       : "";
-    meta.textContent = `#${order.id} · ${order.site} · Hero ID ${order.heroId}${gemsPart}`;
+    meta.textContent = `#${order.id} · ${order.site} · ${order.domain}${gemsPart}`;
 
     card.append(top, meta);
 
@@ -214,8 +230,6 @@ async function loadConfig() {
   refreshMs = config.pollIntervalMs || 2000;
   pollIntervalEl.textContent = `${refreshMs}ms`;
 
-  if (config.defaultSite) siteInput.value = config.defaultSite;
-  if (config.defaultDomain) domainInput.value = config.defaultDomain;
   if (config.botUsername)
     telegramLink.href = `https://t.me/${config.botUsername}`;
 
@@ -225,22 +239,21 @@ async function loadConfig() {
 async function loadDomainCosts() {
   try {
     const data = await api("/api/domains");
-    domainCosts = {};
-    data.domains.forEach((d) => {
-      domainCosts[d.name || d.domain] = d.costGems;
-    });
+    renderDomains(data.domains);
     updateOrderCostHint();
   } catch {
-    orderCostHint.textContent = "Could not load domain prices.";
+    orderCostHint.textContent = "Could not load services.";
   }
 }
 
 function updateOrderCostHint() {
-  const domain = domainInput.value.trim();
-  const cost = domainCosts[domain];
-  orderCostHint.textContent = cost
-    ? `Estimated cost: ${fmt(cost)} gems for ${domain}`
-    : "Select a domain to see gem cost.";
+  const selected = domainSelect.value;
+  const domain = domainList.find((d) => (d.name || d.domain) === selected);
+  if (domain) {
+    orderCostHint.textContent = `Cost: ${fmt(domain.costGems)} gems`;
+  } else {
+    orderCostHint.textContent = "Select a service to see gem cost.";
+  }
 }
 
 async function runTopup(body) {
@@ -269,15 +282,16 @@ async function runTopup(body) {
 
 async function createOrder(event) {
   event.preventDefault();
-  const site = siteInput.value.trim();
-  const domain = domainInput.value.trim();
-  if (!site || !domain) return;
+  const selected = domainSelect.value;
+  if (!selected) return;
 
   orderForm.querySelector("button").disabled = true;
   try {
+    const domain = domainList.find((d) => (d.name || d.domain) === selected);
+    const site = "telegram.com"; // default site
     await api("/api/orders", {
       method: "POST",
-      body: JSON.stringify({ site, domain }),
+      body: JSON.stringify({ site, domain: selected }),
     });
     await loadOrders();
     await loadWallet();
@@ -340,7 +354,7 @@ refreshBtn.addEventListener("click", () => {
   loadOrders();
   loadWallet();
 });
-domainInput.addEventListener("input", updateOrderCostHint);
+domainSelect.addEventListener("change", updateOrderCostHint);
 
 function updateCustomTopupHint() {
   const amountMyr = parseFloat(customMyrInput.value);

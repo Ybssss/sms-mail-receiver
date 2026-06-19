@@ -154,7 +154,12 @@ h2 {
   margin-bottom: 14px;
 }
 
-.order-form,
+.order-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
 .token-row {
   display: grid;
   grid-template-columns: 1fr 1fr auto;

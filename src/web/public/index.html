@@ -27,7 +27,6 @@
           </p>
         </div>
         <div class="header-actions">
-          <span class="status-pill gems-pill" id="gems-balance">💎 —</span>
           <span class="status-pill" id="live-status">Connecting…</span>
           <a
             class="btn-secondary"
@@ -46,8 +45,8 @@
           <strong id="gems-per-myr">—</strong>
         </article>
         <article class="stat-card">
-          <span class="stat-label">USD / MYR</span>
-          <strong id="usd-myr">—</strong>
+          <span class="stat-label">Your balance</span>
+          <strong id="gems-balance">💎 —</strong>
         </article>
         <article class="stat-card">
           <span class="stat-label">Poll interval</span>
@@ -82,22 +81,13 @@
       <section class="panel">
         <h2>Order email</h2>
         <form id="order-form" class="order-form">
-          <input
-            id="site-input"
-            type="text"
-            placeholder="Site (e.g. telegram.com)"
-            required
-          />
-          <input
-            id="domain-input"
-            type="text"
-            placeholder="Domain (e.g. gmail.com)"
-            required
-          />
+          <select id="domain-select" aria-label="Select a service" required>
+            <option value="">Select a service...</option>
+          </select>
           <button type="submit">Order now</button>
         </form>
         <p class="hint" id="order-cost-hint">
-          Cost in gems shown after domain load.
+          Select a service to see gem cost.
         </p>
       </section>
 

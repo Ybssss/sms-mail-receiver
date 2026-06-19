@@ -376,8 +376,13 @@ function createWebApp() {
   });
 
   // ── Admin endpoints (protected + admin-only) ─────────────────────────────
+  function isAdminUser(req) {
+    const tid = req.user?.telegramId;
+    return tid && config.adminTelegramIds.includes(String(tid));
+  }
+
   app.get("/api/admin/pending-payments", async (req, res) => {
-    if (!config.adminTelegramIds.includes(String(req.user.id))) {
+    if (!isAdminUser(req)) {
       res.status(403).json({ error: "Admin only" });
       return;
     }
@@ -390,7 +395,7 @@ function createWebApp() {
   });
 
   app.post("/api/admin/approve-payment", async (req, res) => {
-    if (!config.adminTelegramIds.includes(String(req.user.id))) {
+    if (!isAdminUser(req)) {
       res.status(403).json({ error: "Admin only" });
       return;
     }
@@ -408,7 +413,7 @@ function createWebApp() {
   });
 
   app.post("/api/admin/reject-payment", async (req, res) => {
-    if (!config.adminTelegramIds.includes(String(req.user.id))) {
+    if (!isAdminUser(req)) {
       res.status(403).json({ error: "Admin only" });
       return;
     }
