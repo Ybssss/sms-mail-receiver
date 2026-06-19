@@ -611,6 +611,26 @@ function createBot() {
     }
   });
 
+  async function sendManualPayment(ctx, result, title) {
+    const caption = [
+      `${title} — Manual Payment`,
+      "",
+      ...result.instructions,
+      "",
+      `Payment ID: #${result.paymentId}`,
+    ].join("\n");
+
+    if (result.qrUrl) {
+      try {
+        await ctx.replyWithPhoto(result.qrUrl, { caption });
+        return;
+      } catch {
+        // QR URL may not be a direct image (e.g. Google Drive) — fallback to text
+      }
+    }
+    await ctx.reply(caption);
+  }
+
   bot.action(/^pay_tng_(\d+)$/, async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const packageId = parseInt(ctx.match[1], 10);
@@ -620,22 +640,7 @@ function createBot() {
         method: "manual_tng",
         packageId,
       });
-      const caption = [
-        "📱 *Touch n Go eWallet — Manual Payment*",
-        "",
-        ...result.instructions,
-        "",
-        `Payment ID: #${result.paymentId}`,
-      ].join("\n");
-
-      if (result.qrUrl) {
-        await ctx.replyWithPhoto(result.qrUrl, {
-          caption,
-          parse_mode: "Markdown",
-        });
-      } else {
-        await ctx.reply(caption, { parse_mode: "Markdown" });
-      }
+      await sendManualPayment(ctx, result, "📱 Touch n Go eWallet");
     } catch (err) {
       await ctx.reply(`Payment error: ${err.message}`);
     }
@@ -650,22 +655,7 @@ function createBot() {
         method: "manual_bank",
         packageId,
       });
-      const caption = [
-        "🏦 *Bank Transfer — Manual Payment*",
-        "",
-        ...result.instructions,
-        "",
-        `Payment ID: #${result.paymentId}`,
-      ].join("\n");
-
-      if (result.qrUrl) {
-        await ctx.replyWithPhoto(result.qrUrl, {
-          caption,
-          parse_mode: "Markdown",
-        });
-      } else {
-        await ctx.reply(caption, { parse_mode: "Markdown" });
-      }
+      await sendManualPayment(ctx, result, "🏦 Bank Transfer");
     } catch (err) {
       await ctx.reply(`Payment error: ${err.message}`);
     }
