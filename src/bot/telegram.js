@@ -902,11 +902,11 @@ function createBot() {
     try {
       const { site, domain } = await resolveOrderDomain(domainName);
       const { costGems } = await estimateOrderCost(domain);
-      await ctx.reply(
+      await ctx.editMessageText(
         `Ordering ${site} @ ${domain} (${costGems.toLocaleString()} gems)…`,
       );
       const { order: saved } = await placeOrder(user.id, site, domain);
-      await ctx.reply(
+      await ctx.editMessageText(
         [
           "Order placed ✅",
           "",
@@ -918,13 +918,13 @@ function createBot() {
       );
     } catch (err) {
       if (err.code === "INSUFFICIENT_GEMS") {
-        await ctx.reply(
+        await ctx.editMessageText(
           `Not enough gems. Tap ➕ Top up.`,
           mainInlineKeyboard(user.accessToken),
         );
         return;
       }
-      await ctx.reply(`Order failed: ${err.message}`);
+      await ctx.editMessageText(`Order failed: ${err.message}`);
     }
   });
 
@@ -938,7 +938,7 @@ function createBot() {
         config.defaultSite,
       );
       const { order: saved } = await placeOrder(user.id, site, domain);
-      await ctx.reply(
+      await ctx.editMessageText(
         [
           "Order placed ✅",
           "",
@@ -950,13 +950,13 @@ function createBot() {
       );
     } catch (err) {
       if (err.code === "INSUFFICIENT_GEMS") {
-        await ctx.reply(
+        await ctx.editMessageText(
           `Not enough gems. Tap ➕ Top up.`,
           mainInlineKeyboard(user.accessToken),
         );
         return;
       }
-      await ctx.reply(`Order failed: ${err.message}`);
+      await ctx.editMessageText(`Order failed: ${err.message}`);
     }
   });
 
@@ -967,19 +967,19 @@ function createBot() {
 
     const order = getOrderById(id, user.id);
     if (!order) {
-      await ctx.reply("Order not found.");
+      await ctx.editMessageText("Order not found.");
       return;
     }
 
     try {
       const remote = await getEmail(order.heroId);
       const updated = saveOrder(user.id, remote);
-      await ctx.reply(
+      await ctx.editMessageText(
         formatOrder(updated),
         orderListKeyboard(listOrders(user.id, { limit: 20 })),
       );
     } catch {
-      await ctx.reply(
+      await ctx.editMessageText(
         formatOrder(order),
         orderListKeyboard(listOrders(user.id, { limit: 20 })),
       );
@@ -993,18 +993,18 @@ function createBot() {
 
     const order = getOrderById(id, user.id);
     if (!order) {
-      await ctx.reply("Order not found.");
+      await ctx.editMessageText("Order not found.");
       return;
     }
 
     try {
       await cancelOrderWithRefund(user.id, order);
-      await ctx.reply(
+      await ctx.editMessageText(
         `Cancelled order #${id}`,
         orderListKeyboard(listOrders(user.id, { limit: 20 })),
       );
     } catch (err) {
-      await ctx.reply(`Cancel failed: ${err.message}`);
+      await ctx.editMessageText(`Cancel failed: ${err.message}`);
     }
   });
 

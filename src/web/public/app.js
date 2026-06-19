@@ -272,6 +272,14 @@ async function runTopup(body) {
         ...result.instructions,
         `Payment #${result.paymentId}`,
       ].join(" · ");
+      // Show QR image for manual payments if available
+      if (result.qrUrl) {
+        const qrImg = document.createElement("img");
+        qrImg.src = result.qrUrl;
+        qrImg.alt = "Payment QR code";
+        qrImg.className = "payment-qr";
+        topupResult.after(qrImg);
+      }
     } else {
       topupResult.textContent = result.note || "Payment created.";
     }
@@ -359,6 +367,20 @@ refreshBtn.addEventListener("click", () => {
   loadWallet();
 });
 domainSelect.addEventListener("change", updateOrderCostHint);
+
+// ── Payment QR image style ──────────────────────────────────────
+const style = document.createElement("style");
+style.textContent = `
+  .payment-qr {
+    max-width: 250px;
+    width: 100%;
+    height: auto;
+    border-radius: 12px;
+    display: block;
+    margin: 12px 0;
+  }
+`;
+document.head.appendChild(style);
 
 function updateCustomTopupHint() {
   const amountMyr = parseFloat(customMyrInput.value);
