@@ -338,8 +338,11 @@ function createWebApp() {
 
   app.post("/api/orders", orderLimiter, async (req, res) => {
     try {
-      const site = (req.body?.site || config.defaultSite).trim();
-      const domain = (req.body?.domain || config.defaultDomain).trim();
+      const { site, domain } =
+        await require("../services/orderService").resolveOrderDomain(
+          req.body?.domain || "",
+          req.body?.site || "",
+        );
       const { order, gemsCharged } = await placeOrder(
         req.user.id,
         site,

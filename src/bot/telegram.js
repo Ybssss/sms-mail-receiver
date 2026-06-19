@@ -16,6 +16,7 @@ const {
   placeOrder,
   cancelOrderWithRefund,
   estimateOrderCost,
+  resolveOrderDomain,
 } = require("../services/orderService");
 const {
   createTopup,
@@ -214,11 +215,17 @@ async function showDomains(ctx) {
 }
 
 async function showOrderMenu(ctx, user) {
-  const { costGems } = await estimateOrderCost(config.defaultDomain);
+  let defaultCostMsg = "";
+  try {
+    const { costGems } = await estimateOrderCost(config.defaultDomain);
+    defaultCostMsg = `${config.defaultSite} @ ${config.defaultDomain} (${costGems.toLocaleString()} gems)`;
+  } catch {
+    defaultCostMsg = "Check 📋 Domains for available services and prices.";
+  }
   await ctx.reply(
     [
       "Quick order:",
-      `${config.defaultSite} @ ${config.defaultDomain} (${costGems.toLocaleString()} gems)`,
+      defaultCostMsg,
       "",
       "Tap a button or pick a domain from 📋 Domains.",
     ].join("\n"),
@@ -239,15 +246,29 @@ async function showMainMenu(ctx, user, greeting) {
   const name = greeting || ctx.from?.first_name || "there";
   const inline = mainInlineKeyboard(user.accessToken);
   const reply = replyMainMenu(user.accessToken);
+  const isAdminUser =
+    user.telegramId &&
+    config.adminTelegramIds.includes(String(user.telegramId));
+
+  const userCommands = [
+    "🟢 User commands:",
+    "/balance · /topup · /order [domain]",
+    "/list · /mail <id> · /domains · /cancel <id> · /web",
+  ];
+
+  const adminCommands = isAdminUser
+    ? ["", "🔴 Admin commands:", "/approve [id] · /setqr_tng · /setqr_bank"]
+    : [];
 
   await ctx.reply(
     [
       `Hi ${name}! 👋`,
       "",
-      "Use the buttons below for quick actions.",
+      "Tap the buttons below or type a command.",
       "Open 🌐 Open app for the full dashboard inside Telegram.",
       "",
-      "Advanced commands still work: /cancel <id>, /mail <id>, /approve (admin).",
+      ...userCommands,
+      ...adminCommands,
     ].join("\n"),
     {
       reply_markup: {
@@ -310,13 +331,39 @@ function createBot() {
 
   bot.command("help", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
+    const isAdminUser =
+      user.telegramId &&
+      config.adminTelegramIds.includes(String(user.telegramId));
+
+    const userCommands = [
+      "🟢 User commands:",
+      "/balance — view gems & exchange rate",
+      "/topup — buy gems (FPX, TnG, Stars, bank)",
+      "/order [domain] — order a disposable email",
+      "/list — your active orders",
+      "/mail <id> — refresh a specific order",
+      "/domains — list services & prices",
+      "/cancel <id> — cancel a pending order",
+      "/web — open web dashboard",
+    ];
+
+    const adminCommands = isAdminUser
+      ? [
+          "",
+          "🔴 Admin commands:",
+          "/approve [id] — approve manual payment",
+          "/setqr_tng — reply to photo to set TnG QR",
+          "/setqr_bank — reply to photo to set Bank QR",
+          "/webhook — show webhook URL",
+        ]
+      : [];
+
     await ctx.reply(
       [
         "Quick actions: use the keyboard buttons or inline menu.",
         "",
-        "Commands (optional):",
-        "/balance · /topup · /order [site] [domain]",
-        "/list · /mail <id> · /domains · /cancel <id> · /web",
+        ...userCommands,
+        ...adminCommands,
       ].join("\n"),
       mainInlineKeyboard(user.accessToken),
     );
@@ -463,10 +510,11 @@ function createBot() {
       .trim()
       .split(/\s+/)
       .filter(Boolean);
-    const site = parts[0] || config.defaultSite;
-    const domain = parts[1] || config.defaultDomain;
+    const rawSite = parts[0] || "";
+    const rawDomain = parts[1] || "";
 
     try {
+      const { site, domain } = await resolveOrderDomain(rawDomain, rawSite);
       const { costGems } = await estimateOrderCost(domain);
       await ctx.reply(
         `Ordering ${site} @ ${domain} (${costGems.toLocaleString()} gems)…`,
@@ -636,16 +684,34 @@ function createBot() {
 
     const caption = lines.join("\n");
 
+    const confirmButtons = Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          "✅ I've paid, notify admin",
+          `confirm_paid_${result.paymentId}`,
+        ),
+      ],
+      [
+        Markup.button.callback(
+          "❌ Cancel payment",
+          `cancel_payment_${result.paymentId}`,
+        ),
+      ],
+    ]);
+
     if (fileId) {
       try {
-        await ctx.replyWithPhoto(fileId, { caption });
+        await ctx.replyWithPhoto(fileId, {
+          caption,
+          ...confirmButtons,
+        });
         return;
       } catch {
         // File ID expired or invalid — fall through to text
       }
     }
 
-    await ctx.reply(caption);
+    await ctx.reply(caption, confirmButtons);
   }
 
   bot.action(/^pay_tng_(\d+)$/, async (ctx) => {
@@ -676,6 +742,93 @@ function createBot() {
     } catch (err) {
       await ctx.reply(`Payment error: ${err.message}`);
     }
+  });
+
+  // ── Manual payment confirmation buttons ──────────────────────
+  bot.action(/^confirm_paid_(\d+)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const paymentId = parseInt(ctx.match[1], 10);
+    await ctx.answerCbQuery();
+
+    // Get the payment to verify it belongs to this user and is pending
+    const payment = require("../services/payments/store").getPaymentById(
+      paymentId,
+    );
+    if (!payment || payment.userId !== user.id) {
+      await ctx.reply("Payment not found or not yours.");
+      return;
+    }
+    if (payment.status !== "pending") {
+      await ctx.reply("This payment has already been processed.");
+      return;
+    }
+
+    // Mark the meta with a user_confirmed flag
+    const meta = {
+      ...(payment.meta || {}),
+      userConfirmedAt: new Date().toISOString(),
+      userTelegramId: ctx.from.id,
+      userUsername: ctx.from.username || null,
+    };
+    require("../services/payments/store").updatePayment(paymentId, { meta });
+
+    // Notify all admins
+    const adminIds = config.adminTelegramIds;
+    const msg = [
+      "📢 User confirmed manual payment!",
+      "",
+      `Payment #${paymentId}`,
+      `User: ${ctx.from.first_name} (@${ctx.from.username || "N/A"})`,
+      `Amount: RM ${payment.amountMyr} → ${payment.gems.toLocaleString()} gems`,
+      `Method: ${payment.provider === "manual_tng" ? "TnG eWallet" : "Bank Transfer"}`,
+      "",
+      "Approve via /approve or web admin panel.",
+    ].join("\n");
+
+    for (const adminId of adminIds) {
+      try {
+        await bot.telegram.sendMessage(adminId, msg);
+      } catch (e) {
+        console.error("Failed to notify admin", adminId, e.message);
+      }
+    }
+
+    await ctx.reply(
+      [
+        "✅ Your payment confirmation has been sent to the admin.",
+        "",
+        "Once the admin verifies the payment, gems will be credited to your account.",
+        "You will receive a notification when approved.",
+      ].join("\n"),
+    );
+  });
+
+  bot.action(/^cancel_payment_(\d+)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const paymentId = parseInt(ctx.match[1], 10);
+    await ctx.answerCbQuery();
+
+    const payment = require("../services/payments/store").getPaymentById(
+      paymentId,
+    );
+    if (!payment || payment.userId !== user.id) {
+      await ctx.reply("Payment not found or not yours.");
+      return;
+    }
+    if (payment.status !== "pending") {
+      await ctx.reply("This payment has already been processed.");
+      return;
+    }
+
+    // Cancel the payment
+    require("../services/payments/store").updatePayment(paymentId, {
+      status: "cancelled",
+    });
+
+    await ctx.reply(
+      "❌ Payment cancelled. You can create a new top-up anytime.",
+      mainInlineKeyboard(user.accessToken),
+    );
   });
 
   bot.action(/^pay_stars_(\d+)$/, async (ctx) => {
@@ -743,19 +896,16 @@ function createBot() {
 
   bot.action(/^order_domain_(.+)$/, async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
-    const domain = decodeURIComponent(ctx.match[1]);
+    const domainName = decodeURIComponent(ctx.match[1]);
     await ctx.answerCbQuery();
 
     try {
+      const { site, domain } = await resolveOrderDomain(domainName);
       const { costGems } = await estimateOrderCost(domain);
       await ctx.reply(
-        `Ordering ${config.defaultSite} @ ${domain} (${costGems.toLocaleString()} gems)…`,
+        `Ordering ${site} @ ${domain} (${costGems.toLocaleString()} gems)…`,
       );
-      const { order: saved } = await placeOrder(
-        user.id,
-        config.defaultSite,
-        domain,
-      );
+      const { order: saved } = await placeOrder(user.id, site, domain);
       await ctx.reply(
         [
           "Order placed ✅",
@@ -783,11 +933,11 @@ function createBot() {
     await ctx.answerCbQuery();
 
     try {
-      const { order: saved } = await placeOrder(
-        user.id,
-        config.defaultSite,
+      const { site, domain } = await resolveOrderDomain(
         config.defaultDomain,
+        config.defaultSite,
       );
+      const { order: saved } = await placeOrder(user.id, site, domain);
       await ctx.reply(
         [
           "Order placed ✅",

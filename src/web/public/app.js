@@ -288,10 +288,14 @@ async function createOrder(event) {
   orderForm.querySelector("button").disabled = true;
   try {
     const domain = domainList.find((d) => (d.name || d.domain) === selected);
-    const site = "telegram.com"; // default site
+    // Send the domain identifier; backend will look up correct site/domain fields
+    const domainName = (domain.name || domain.domain || "").trim();
+    if (!domainName) {
+      throw new Error("Invalid domain selection");
+    }
     await api("/api/orders", {
       method: "POST",
-      body: JSON.stringify({ site, domain: selected }),
+      body: JSON.stringify({ domain: domainName }),
     });
     await loadOrders();
     await loadWallet();
