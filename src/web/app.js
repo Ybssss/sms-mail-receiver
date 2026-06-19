@@ -37,6 +37,9 @@ const { getOrCreateTelegramUser } = require("../services/mailStore");
 function createWebApp() {
   const app = express();
 
+  // Trust Render's proxy (required for rate limiting behind reverse proxy)
+  app.set("trust proxy", 1);
+
   // ── Security headers via helmet ───────────────────────────────────────────
   app.use(
     helmet({
