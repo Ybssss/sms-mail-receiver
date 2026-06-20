@@ -52,6 +52,38 @@ function createWebApp() {
   // Trust Render's proxy (required for rate limiting behind reverse proxy)
   app.set("trust proxy", 1);
 
+  // Restore QR images from DB on startup
+  try {
+    const { getDb } = require("../db/database");
+    const db = getDb();
+    const tngRow = db
+      .prepare("SELECT value FROM app_config WHERE key = ?")
+      .get("qr_tng_base64");
+    if (tngRow?.value) {
+      const fs = require("fs");
+      const dir = path.join(__dirname, "public", "qr");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "qr-tng.png"),
+        Buffer.from(tngRow.value, "base64"),
+      );
+    }
+    const bankRow = db
+      .prepare("SELECT value FROM app_config WHERE key = ?")
+      .get("qr_bank_base64");
+    if (bankRow?.value) {
+      const fs = require("fs");
+      const dir = path.join(__dirname, "public", "qr");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "qr-bank.png"),
+        Buffer.from(bankRow.value, "base64"),
+      );
+    }
+  } catch (e) {
+    console.warn("QR restore failed:", e.message);
+  }
+
   // ── Security headers via helmet ───────────────────────────────────────────
   app.use(
     helmet({
@@ -617,6 +649,71 @@ function createWebApp() {
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
+  });
+
+  // ── Admin dashboard endpoints ───────────────────────────────
+  app.get("/api/admin/dashboard", async (req, res) => {
+    if (!isAdminUser(req)) {
+      res.status(403).json({ error: "Admin only" });
+      return;
+    }
+    try {
+      const { getDb } = require("../db/database");
+      const pending = await listPendingManualPayments();
+      const blocked = getDb()
+        .prepare(
+          "SELECT * FROM blocked_users ORDER BY blocked_at DESC LIMIT 20",
+        )
+        .all();
+      const totalUsers = getDb()
+        .prepare("SELECT COUNT(*) as c FROM users")
+        .get().c;
+      const totalOrders = getDb()
+        .prepare("SELECT COUNT(*) as c FROM email_orders")
+        .get().c;
+      const totalPayments = getDb()
+        .prepare("SELECT COUNT(*) as c FROM payments WHERE status = 'paid'")
+        .get().c;
+      let apiBalance = null;
+      try {
+        const {
+          getBalance: getSmsBalance,
+        } = require("../services/smsActivate");
+        apiBalance = await getSmsBalance();
+      } catch {}
+      res.json({
+        pending,
+        blocked,
+        stats: { totalUsers, totalOrders, totalPayments },
+        apiBalance,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/set-qr", async (req, res) => {
+    if (!isAdminUser(req)) {
+      res.status(403).json({ error: "Admin only" });
+      return;
+    }
+    const { type, base64 } = req.body || {};
+    if (!base64 || !type) {
+      res.status(400).json({ error: "Missing type or base64" });
+      return;
+    }
+    const key = type === "tng" ? "qr_tng_base64" : "qr_bank_base64";
+    const filename = type === "tng" ? "qr-tng.png" : "qr-bank.png";
+    const { getDb } = require("../db/database");
+    getDb()
+      .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
+      .run(key, base64);
+    const fs = require("fs");
+    const path = require("path");
+    const dir = path.join(__dirname, "public", "qr");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, filename), Buffer.from(base64, "base64"));
+    res.json({ ok: true });
   });
 
   // ── SPA fallback: serve index.html for all non-API routes ────────────────

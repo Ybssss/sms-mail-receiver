@@ -759,19 +759,29 @@ const path = require("path");
 const https = require("https");
 
 async function saveQrImage(fileUrl, filename) {
+  const { getDb } = require("../db/database");
   return new Promise((resolve, reject) => {
-    const dir = path.join(__dirname, "..", "web", "public", "qr");
-    fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, filename);
     https
       .get(fileUrl, (res) => {
-        const ws = fs.createWriteStream(filePath);
-        res.pipe(ws);
-        ws.on("finish", () => {
-          ws.close();
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          const buffer = Buffer.concat(chunks);
+          const b64 = buffer.toString("base64");
+          const dbKey =
+            filename === "qr-tng.png" ? "qr_tng_base64" : "qr_bank_base64";
+          getDb()
+            .prepare(
+              "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+            )
+            .run(dbKey, b64);
+          // Also save to filesystem for static serving
+          const dir = path.join(__dirname, "..", "web", "public", "qr");
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, filename), buffer);
           resolve();
         });
-        ws.on("error", reject);
+        res.on("error", reject);
       })
       .on("error", reject);
   });
