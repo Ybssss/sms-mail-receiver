@@ -4,10 +4,15 @@ let pollTimer = null;
 let refreshMs = 2000;
 let wallet = null;
 let domainList = [];
+let smsServiceList = [];
 let tgWebApp = null;
 
 const orderForm = document.getElementById("order-form");
 const serviceSelect = document.getElementById("service-select");
+const smsServiceSelect = document.getElementById("sms-service-select");
+const smsOrderForm = document.getElementById("sms-order-form");
+const smsResult = document.getElementById("sms-result");
+const smsError = document.getElementById("sms-error");
 const ordersList = document.getElementById("orders-list");
 const emptyState = document.getElementById("empty-state");
 const liveStatus = document.getElementById("live-status");
@@ -284,6 +289,7 @@ async function loadConfig() {
 }
 
 async function loadServices() {
+  // Load email domains
   try {
     const data = await api("/api/domains");
     renderServices(data.domains);
@@ -294,6 +300,115 @@ async function loadServices() {
     serviceError.style.display = "block";
     orderCostHint.textContent =
       "Could not load services. Check Hero-SMS API key.";
+  }
+
+  // Load SMS activation services
+  try {
+    const smsData = await api("/api/sms-services");
+    renderSmsServices(smsData.services);
+  } catch (err) {
+    if (smsError) {
+      smsError.textContent = "SMS services unavailable: " + err.message;
+      smsError.style.display = "block";
+    }
+  }
+}
+
+function renderSmsServices(services) {
+  if (!smsServiceSelect) return;
+  smsServiceList = services || [];
+  smsServiceSelect.innerHTML =
+    '<option value="">Select an SMS service...</option>';
+  if (smsError) smsError.style.display = "none";
+  if (smsResult) smsResult.textContent = "";
+
+  if (!services || services.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No SMS services available";
+    opt.disabled = true;
+    smsServiceSelect.appendChild(opt);
+    return;
+  }
+
+  services.forEach((s) => {
+    const opt = document.createElement("option");
+    opt.value = s.code;
+    opt.textContent = `${s.name} — $${s.costUsd?.toFixed(2) || "?"} (stock: ${s.stock || "?"})`;
+    smsServiceSelect.appendChild(opt);
+  });
+}
+
+async function createSmsOrder(event) {
+  event.preventDefault();
+  if (!smsServiceSelect) return;
+  const selected = smsServiceSelect.value;
+  if (!selected) return;
+
+  const submitBtn = smsOrderForm.querySelector("button");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Ordering SMS...";
+  if (smsResult) smsResult.textContent = "Requesting SMS number...";
+  if (smsError) smsError.style.display = "none";
+
+  try {
+    const result = await api("/api/sms/order", {
+      method: "POST",
+      body: JSON.stringify({ service: selected }),
+    });
+
+    const service = smsServiceList.find((s) => s.code === selected);
+    const lines = [
+      `✅ SMS Number Ordered!`,
+      `Service: ${result.serviceName || service?.name || selected}`,
+      `Phone: ${result.phoneNumber}`,
+      `Cost: ${result.costGems.toLocaleString()} gems`,
+      `Expires: ${result.activationEndTime ? new Date(result.activationEndTime).toLocaleString() : "N/A"}`,
+      "",
+      `Activation ID: ${result.activationId}`,
+    ];
+
+    if (smsResult) {
+      smsResult.textContent = lines.join("\n");
+      // Create a check SMS button
+      const checkBtn = document.createElement("button");
+      checkBtn.type = "button";
+      checkBtn.className = "btn-secondary";
+      checkBtn.textContent = "🔄 Check SMS Code";
+      checkBtn.dataset.activationId = result.activationId;
+      checkBtn.addEventListener("click", () =>
+        checkSmsCode(result.activationId),
+      );
+      smsResult.after(checkBtn);
+    }
+  } catch (err) {
+    if (smsError) {
+      smsError.textContent = err.message;
+      smsError.style.display = "block";
+    }
+    if (smsResult) smsResult.textContent = "";
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Order SMS";
+  }
+}
+
+async function checkSmsCode(activationId) {
+  try {
+    const status = await api(`/api/sms/status/${activationId}`);
+    const msgEl = document.createElement("p");
+    msgEl.className = "hint";
+    const statusText =
+      status.status === "OK"
+        ? `✅ Code received: ${status.smsCode}`
+        : `⏳ Status: ${status.status}${status.messages?.length ? ` - ${status.messages[0]?.text || ""}` : ""}`;
+    msgEl.textContent = statusText;
+    if (smsResult) smsResult.after(msgEl);
+  } catch (err) {
+    if (smsError) {
+      smsError.textContent = "Check failed: " + err.message;
+      smsError.style.display = "block";
+    }
   }
 }
 
@@ -422,6 +537,7 @@ function startAutoRefresh() {
 }
 
 orderForm.addEventListener("submit", createOrder);
+if (smsOrderForm) smsOrderForm.addEventListener("submit", createSmsOrder);
 refreshBtn.addEventListener("click", () => {
   loadOrders();
   loadWallet();

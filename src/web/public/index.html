@@ -78,7 +78,7 @@
       </section>
 
       <section class="panel">
-        <h2>Order SMS number</h2>
+        <h2>📧 Email Activation</h2>
         <form id="order-form" class="order-form">
           <select id="service-select" aria-label="Select a service" required>
             <option value="">Loading services...</option>
@@ -89,6 +89,25 @@
           Select a service to see gem cost.
         </p>
         <p class="hint error-hint" id="service-error" style="display: none"></p>
+      </section>
+
+      <section class="panel">
+        <h2>📱 SMS Activation</h2>
+        <p class="hint">
+          Services like Shopee, Lazada, KFC, Grab, McDonald's, and more.
+        </p>
+        <form id="sms-order-form" class="order-form">
+          <select
+            id="sms-service-select"
+            aria-label="Select SMS service"
+            required
+          >
+            <option value="">Loading SMS services...</option>
+          </select>
+          <button type="submit">Order SMS</button>
+        </form>
+        <p class="hint" id="sms-result"></p>
+        <p class="hint error-hint" id="sms-error" style="display: none"></p>
       </section>
 
       <section class="panel">
