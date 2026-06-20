@@ -282,7 +282,8 @@ function createWebApp() {
       req.path === "/health" ||
       req.path === "/config" ||
       req.path === "/telegram-auth" ||
-      req.path === "/session"
+      req.path === "/session" ||
+      req.path === "/sms-countries"
     ) {
       return next();
     }
