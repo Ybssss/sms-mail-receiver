@@ -253,20 +253,37 @@ async function showSmsServices(ctx, page = 0) {
     const { config } = require("../config");
     let services = await getSmsServices();
     if (!Array.isArray(services)) services = [];
+
+    // Fetch prices too
+    let prices = [];
+    try {
+      prices = await getSmsPrices();
+    } catch {}
+    const priceMap = {};
+    if (Array.isArray(prices)) {
+      prices.forEach((p) => {
+        const code = Object.keys(p)[0];
+        priceMap[code] = p[code];
+      });
+    }
+
     const list = services.map((s) => ({
       code: s.code,
-      name: getServiceName(s.code),
+      name: getServiceName(s.code, s.name),
+      price: priceMap[s.code],
     }));
     const totalPages = Math.ceil(list.length / PAGE_SIZE) || 1;
     const start = page * PAGE_SIZE;
     const pageItems = list.slice(start, start + PAGE_SIZE);
 
     const lines = [
-      `📱 SMS Activation Services`,
+      `📱 SMS Activation Services (${config.smsActivateCountry})`,
       `Total: ${list.length} services\n`,
     ];
     pageItems.forEach((s) => {
-      lines.push(`• ${s.name} (${s.code})`);
+      const cost = s.price?.cost ? `$${Number(s.price.cost).toFixed(2)}` : "?";
+      const stock = s.price?.count || "?";
+      lines.push(`• ${s.name} [${s.code}] — ${cost} (stock: ${stock})`);
     });
     if (totalPages > 1) lines.push(`\nPage ${page + 1} / ${totalPages}`);
 

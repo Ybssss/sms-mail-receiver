@@ -335,16 +335,17 @@ const SERVICE_NAMES = {
   yn: "Yandex",
 };
 
-function getServiceName(code) {
-  const name = SERVICE_NAMES[code] || code;
-  return name;
+function getServiceName(code, apiName) {
+  // Use the API's actual name if available, otherwise fallback to static map or code
+  if (apiName && apiName !== code) return apiName;
+  return SERVICE_NAMES[code] || code;
 }
 
 async function getServicesWithNames(country) {
   const services = await getServices(country);
   return services.map((s) => ({
     ...s,
-    displayName: getServiceName(s.code),
+    displayName: getServiceName(s.code, s.name),
   }));
 }
 
