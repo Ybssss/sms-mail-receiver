@@ -55,6 +55,29 @@ function migrate(dbInstance) {
     CREATE INDEX IF NOT EXISTS idx_gem_transactions_user_id ON gem_transactions(user_id);
   `);
 
+  // ── User preferences ──────────────────────────────────────
+  const upCols = dbInstance.prepare("PRAGMA table_info(users)").all();
+  const upNames = upCols.map((c) => c.name);
+  if (!upNames.includes("preferred_country")) {
+    dbInstance.exec("ALTER TABLE users ADD COLUMN preferred_country TEXT");
+  }
+  if (!upNames.includes("recent_services")) {
+    dbInstance.exec("ALTER TABLE users ADD COLUMN recent_services TEXT");
+  }
+  if (!upNames.includes("language")) {
+    dbInstance.exec("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'en'");
+  }
+
+  // ── Blocked users ──────────────────────────────────────────
+  dbInstance.exec(`
+    CREATE TABLE IF NOT EXISTS blocked_users (
+      user_id INTEGER PRIMARY KEY,
+      reason TEXT,
+      blocked_at TEXT NOT NULL DEFAULT (datetime('now')),
+      blocked_by INTEGER
+    );
+  `);
+
   const pkgCount = dbInstance
     .prepare("SELECT COUNT(*) AS c FROM gem_packages")
     .get().c;
@@ -127,4 +150,78 @@ function getDb() {
   return db;
 }
 
-module.exports = { getDb };
+function isUserBlocked(telegramId) {
+  const d = getDb();
+  const row = d
+    .prepare("SELECT 1 FROM blocked_users WHERE user_id = ?")
+    .get(Number(telegramId));
+  return !!row;
+}
+
+function blockUser(telegramId, reason, blockedBy) {
+  const d = getDb();
+  d.prepare(
+    "INSERT OR REPLACE INTO blocked_users (user_id, reason, blocked_by) VALUES (?, ?, ?)",
+  ).run(Number(telegramId), reason || "manual block", blockedBy || null);
+}
+
+function unblockUser(telegramId) {
+  const d = getDb();
+  d.prepare("DELETE FROM blocked_users WHERE user_id = ?").run(
+    Number(telegramId),
+  );
+}
+
+function listBlockedUsers() {
+  const d = getDb();
+  return d
+    .prepare("SELECT * FROM blocked_users ORDER BY blocked_at DESC")
+    .all();
+}
+
+function saveUserPreference(telegramId, key, value) {
+  const d = getDb();
+  if (
+    key === "preferred_country" ||
+    key === "recent_services" ||
+    key === "language"
+  ) {
+    const val =
+      typeof value === "object" ? JSON.stringify(value) : String(value);
+    d.prepare(`UPDATE users SET ${key} = ? WHERE telegram_id = ?`).run(
+      val,
+      String(telegramId),
+    );
+  }
+}
+
+function getUserPreferences(telegramId) {
+  const d = getDb();
+  const row = d
+    .prepare(
+      "SELECT preferred_country, recent_services, language FROM users WHERE telegram_id = ?",
+    )
+    .get(String(telegramId));
+  if (!row) return {};
+  try {
+    return {
+      preferredCountry: row.preferred_country || null,
+      recentServices: row.recent_services
+        ? JSON.parse(row.recent_services)
+        : [],
+      language: row.language || "en",
+    };
+  } catch {
+    return {};
+  }
+}
+
+module.exports = {
+  getDb,
+  isUserBlocked,
+  blockUser,
+  unblockUser,
+  listBlockedUsers,
+  saveUserPreference,
+  getUserPreferences,
+};
