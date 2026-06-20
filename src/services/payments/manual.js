@@ -1,26 +1,37 @@
 const { config } = require("../../config");
 
 function getManualPaymentInfo(provider) {
+  const baseUrl = config.webappUrl || "";
   if (provider === "manual_tng") {
+    const qrUrl = baseUrl
+      ? `${baseUrl}/qr/qr-tng.png`
+      : config.manualTngQrUrl || null;
     return {
       id: "manual_tng",
       name: "Touch n Go (manual)",
       title: "Touch n Go eWallet",
-      qrUrl: config.manualTngQrUrl || null,
-      details: [`📱 TnG: ${config.manualTngPhone}`],
+      qrUrl: qrUrl,
+      details: [
+        `📱 TnG: ${config.manualTngPhone}`,
+        ...(qrUrl ? ["Scan QR below to pay:"] : []),
+      ],
       note: "After payment, wait for admin approval.",
     };
   }
 
+  const qrUrl = baseUrl
+    ? `${baseUrl}/qr/qr-bank.png`
+    : config.manualBankQrUrl || null;
   return {
     id: "manual_bank",
     name: "Bank transfer (manual)",
     title: "Bank transfer",
-    qrUrl: config.manualBankQrUrl || null,
+    qrUrl: qrUrl,
     details: [
       `🏦 Bank: ${config.manualBankName}`,
       `📄 Account: ${config.manualBankAccount}`,
       `👤 Name: ${config.manualBankHolder}`,
+      ...(qrUrl ? ["Scan QR below to pay:"] : []),
     ],
     note: "After payment, wait for admin approval.",
   };

@@ -687,12 +687,21 @@ function createBot() {
       await ctx.reply("Reply to a photo with /setqr_tng");
       return;
     }
-    const fileId = ctx.message.reply_to_message.photo.pop().file_id;
-    require("../db/database")
-      .getDb()
-      .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
-      .run("qr_tng_file_id", fileId);
-    await ctx.reply("✅ TnG QR saved!");
+    await ctx.reply("Downloading QR image...");
+    try {
+      const fileId = ctx.message.reply_to_message.photo.pop().file_id;
+      const fileUrl = await ctx.telegram.getFileLink(fileId);
+      // Save file_id for in-chat display
+      require("../db/database")
+        .getDb()
+        .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
+        .run("qr_tng_file_id", fileId);
+      // Download and save as public file
+      await saveQrImage(fileUrl, "qr-tng.png");
+      await ctx.reply("✅ TnG QR saved and available in web app!");
+    } catch (err) {
+      await ctx.reply(`Failed: ${err.message}`);
+    }
   });
   bot.command("setqr_bank", async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
@@ -703,12 +712,19 @@ function createBot() {
       await ctx.reply("Reply to a photo with /setqr_bank");
       return;
     }
-    const fileId = ctx.message.reply_to_message.photo.pop().file_id;
-    require("../db/database")
-      .getDb()
-      .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
-      .run("qr_bank_file_id", fileId);
-    await ctx.reply("✅ Bank QR saved!");
+    await ctx.reply("Downloading QR image...");
+    try {
+      const fileId = ctx.message.reply_to_message.photo.pop().file_id;
+      const fileUrl = await ctx.telegram.getFileLink(fileId);
+      require("../db/database")
+        .getDb()
+        .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
+        .run("qr_bank_file_id", fileId);
+      await saveQrImage(fileUrl, "qr-bank.png");
+      await ctx.reply("✅ Bank QR saved and available in web app!");
+    } catch (err) {
+      await ctx.reply(`Failed: ${err.message}`);
+    }
   });
 
   // ── Payments ─────────────────────────────────────────────────
@@ -736,6 +752,29 @@ function createBot() {
     console.error("Telegram bot error:", err);
   });
   return bot;
+}
+
+const fs = require("fs");
+const path = require("path");
+const https = require("https");
+
+async function saveQrImage(fileUrl, filename) {
+  return new Promise((resolve, reject) => {
+    const dir = path.join(__dirname, "..", "web", "public", "qr");
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, filename);
+    https
+      .get(fileUrl, (res) => {
+        const ws = fs.createWriteStream(filePath);
+        res.pipe(ws);
+        ws.on("finish", () => {
+          ws.close();
+          resolve();
+        });
+        ws.on("error", reject);
+      })
+      .on("error", reject);
+  });
 }
 
 async function launchBot(bot, app) {

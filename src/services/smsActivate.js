@@ -321,6 +321,74 @@ async function setStatus(activationId, status) {
  * Get active activations.
  * @returns {Array} Active activations
  */
+/**
+ * Get account balance from the SMS-Activate API.
+ * @returns {object} { balance, currency }
+ */
+async function getBalance() {
+  const result = await smsActivateRequest("getBalance");
+  // Returns text like "ACCESS_BALANCE:123.45" or JSON
+  if (typeof result === "string" && result.startsWith("ACCESS_BALANCE:")) {
+    const balance = parseFloat(result.replace("ACCESS_BALANCE:", "")) || 0;
+    return { balance, currency: "USD" };
+  }
+  if (result?.balance) return result;
+  return { balance: 0, currency: "USD" };
+}
+
+/**
+ * Get top countries for a specific service (best prices/stock).
+ * @param {string} service - Service code (e.g., "oz" for Lazada)
+ * @returns {Array} Top countries with price info
+ */
+async function getTopCountriesByService(service) {
+  const result = await smsActivateRequest("getTopCountriesByService", {
+    service,
+  });
+  if (Array.isArray(result)) return result;
+  if (result?.status === "success" && Array.isArray(result.data))
+    return result.data;
+  return [];
+}
+
+/**
+ * Get rental services and available countries.
+ * @returns {object} Rental services and countries
+ */
+async function getRentServicesAndCountries() {
+  const result = await smsActivateRequest("getRentServicesAndCountries");
+  if (result?.status === "success") return result;
+  return { services: [], countries: [] };
+}
+
+/**
+ * Request a number for rental (long-term).
+ * @param {string} service - Service code
+ * @param {string} country - Country ID
+ * @returns {object} { activationId, phoneNumber, cost }
+ */
+async function getRentNumber(service, country) {
+  const result = await smsActivateRequest("getRentNumber", {
+    service,
+    country,
+  });
+  if (result?.activationId && result?.phoneNumber) {
+    return {
+      activationId: result.activationId,
+      phoneNumber: result.phoneNumber,
+      cost: result.activationCost || 0,
+    };
+  }
+  if (typeof result === "string" && result.startsWith("ACCESS_NUMBER:")) {
+    const parts = result.split(":");
+    return { activationId: parts[1], phoneNumber: parts[2], cost: 0 };
+  }
+  throw new SmsActivateError(
+    typeof result === "string" ? result : JSON.stringify(result),
+    400,
+  );
+}
+
 async function getActiveActivations() {
   const result = await smsActivateRequest("getActiveActivations");
 
@@ -431,6 +499,10 @@ module.exports = {
   getAllSms,
   setStatus,
   getActiveActivations,
+  getBalance,
+  getTopCountriesByService,
+  getRentServicesAndCountries,
+  getRentNumber,
   getServiceName,
   getServicesWithNames,
   SERVICE_NAMES,
