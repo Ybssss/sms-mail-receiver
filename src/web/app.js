@@ -350,11 +350,11 @@ function createWebApp() {
       const enriched = services.map((s) => {
         const priceData = priceMap[s.code] || {};
         const costUsd = priceData.cost || 0;
-        // Convert USD cost to gems dynamically
+        const apiName = s.name || s.code;
         return {
           code: s.code,
-          name: getServiceName(s.code),
-          rawName: s.name || s.code,
+          name: getServiceName(s.code, apiName),
+          rawName: apiName,
           costUsd,
           stock: priceData.count || 0,
           physicalStock: priceData.physicalCount || 0,

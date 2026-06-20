@@ -326,28 +326,17 @@ async function showSmsServices(ctx, page = 0) {
 }
 
 async function showOrderMenu(ctx, user) {
-  let defaultCostMsg = "";
-  try {
-    const { costGems } = await estimateOrderCost(config.defaultDomain);
-    defaultCostMsg = `${config.defaultSite} @ ${config.defaultDomain} (${costGems.toLocaleString()} gems)`;
-  } catch {
-    defaultCostMsg = "Check 📋 Domains for available services and prices.";
-  }
   await ctx.reply(
     [
-      "Quick order:",
-      defaultCostMsg,
+      "📦 **Order a service**",
       "",
-      "Tap a button or pick a domain from 📋 Domains.",
+      "Choose what you want:",
+      "📧 **Email** — receive verification codes via disposable email",
+      "📱 **SMS** — receive SMS codes for app signups",
     ].join("\n"),
     Markup.inlineKeyboard([
-      [
-        Markup.button.callback(
-          `🛒 Order ${config.defaultDomain}`,
-          "order_default",
-        ),
-      ],
-      [Markup.button.callback("📋 Pick domain", "domains")],
+      [Markup.button.callback("📧 Email Activation", "domains")],
+      [Markup.button.callback("📱 SMS Activation", "sms_services")],
       [Markup.button.callback("« Menu", "main_menu")],
     ]),
   );
@@ -728,7 +717,10 @@ function createBot() {
   bot.action("balance", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     await ctx.answerCbQuery();
-    const text = await formatBalanceMessage(user.id);
+    const isAdminUser =
+      user.telegramId &&
+      config.adminTelegramIds.includes(String(user.telegramId));
+    const text = await formatBalanceMessage(user.id, isAdminUser);
     try {
       await ctx.editMessageText(text, mainInlineKeyboard(user.accessToken));
     } catch {
@@ -1082,79 +1074,13 @@ function createBot() {
   bot.action("order_menu", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     await ctx.answerCbQuery();
-    let defaultCostMsg = "";
-    try {
-      const { costGems } = await estimateOrderCost(config.defaultDomain);
-      defaultCostMsg = `${config.defaultSite} @ ${config.defaultDomain} (${costGems.toLocaleString()} gems)`;
-    } catch {
-      defaultCostMsg = "Check 📋 Domains for available services and prices.";
-    }
-    const text = [
-      "Quick order:",
-      defaultCostMsg,
-      "",
-      "Tap a button or pick a domain from 📋 Domains.",
-    ].join("\n");
-    const kb = Markup.inlineKeyboard([
-      [
-        Markup.button.callback(
-          `🛒 Order ${config.defaultDomain}`,
-          "order_default",
-        ),
-      ],
-      [Markup.button.callback("📋 Pick domain", "domains")],
-      [Markup.button.callback("« Menu", "main_menu")],
-    ]);
-    try {
-      await ctx.editMessageText(text, kb);
-    } catch {
-      await ctx.reply(text, kb);
-    }
+    await showOrderMenu(ctx, user);
   });
 
   bot.action("domains", async (ctx) => {
     await ctx.answerCbQuery();
-    await editDomains(ctx);
+    await showDomains(ctx, 0);
   });
-
-  async function editDomains(ctx) {
-    try {
-      const domains = await getDomains();
-      const ex = await getExchangeInfo();
-      const list = (Array.isArray(domains) ? domains : []).slice(0, 12);
-      const lines = await Promise.all(
-        list.map(async (d) => {
-          const name = d.name || d.domain;
-          const { costGems } = await estimateOrderCost(name);
-          return `• ${name} — ${costGems.toLocaleString()} gems, stock ${d.count}`;
-        }),
-      );
-      lines.unshift(`Rate: 1 MYR = ${ex.gemsPerMyr.toLocaleString()} gems`);
-      const domainButtons = list.slice(0, 6).map((d) => {
-        const name = d.name || d.domain;
-        return [
-          Markup.button.callback(
-            `Order @ ${name}`,
-            `order_domain_${encodeURIComponent(name)}`,
-          ),
-        ];
-      });
-      domainButtons.push([Markup.button.callback("« Menu", "main_menu")]);
-      const text = lines.length > 1 ? lines.join("\n") : "No domains returned.";
-      const kb = Markup.inlineKeyboard(domainButtons);
-      try {
-        await ctx.editMessageText(text, kb);
-      } catch {
-        await ctx.reply(text, kb);
-      }
-    } catch (err) {
-      try {
-        await ctx.editMessageText(`Hero-SMS error: ${err.message}`);
-      } catch {
-        await ctx.reply(`Hero-SMS error: ${err.message}`);
-      }
-    }
-  }
 
   bot.action(/^domains_page_(\d+)$/, async (ctx) => {
     await ctx.answerCbQuery();
