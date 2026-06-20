@@ -52,7 +52,7 @@ function createWebApp() {
   // Trust Render's proxy (required for rate limiting behind reverse proxy)
   app.set("trust proxy", 1);
 
-  // Restore QR images from DB on startup
+  // Restore QR images from DB on startup (overwrites static defaults)
   try {
     const { getDb } = require("../db/database");
     const db = getDb();
@@ -64,7 +64,7 @@ function createWebApp() {
       const dir = path.join(__dirname, "public", "qr");
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(
-        path.join(dir, "qr-tng.png"),
+        path.join(dir, "qr-tng.jpg"),
         Buffer.from(tngRow.value, "base64"),
       );
     }
@@ -76,7 +76,7 @@ function createWebApp() {
       const dir = path.join(__dirname, "public", "qr");
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(
-        path.join(dir, "qr-bank.png"),
+        path.join(dir, "qr-bank.jpg"),
         Buffer.from(bankRow.value, "base64"),
       );
     }
@@ -376,12 +376,13 @@ function createWebApp() {
   app.get("/api/sms-services", async (req, res) => {
     try {
       if (!config.smsActivateEnabled) {
-        res.json({ services: [], enabled: false });
+        res.json({ services: [], enabled: false, currentCountryId: null });
         return;
       }
-      // Use numeric country ID (config or query param override)
+      // Use numeric country ID (config default or query param override)
       const queryCountry = req.query.country || "";
-      const countryId = queryCountry || config.smsActivateCountryId || "12";
+      const defaultCountryId = config.smsActivateCountryId || "153";
+      const countryId = queryCountry || defaultCountryId;
       const services = await getSmsServices(countryId);
       const prices = await getSmsPrices(null, countryId);
 
@@ -409,7 +410,7 @@ function createWebApp() {
         };
       });
 
-      res.json({ services: enriched, enabled: true });
+      res.json({ services: enriched, enabled: true, currentCountryId: countryId });
     } catch (err) {
       console.error("[DEBUG] SMS services error:", err.message);
       res.status(502).json({ error: err.message });
@@ -419,6 +420,7 @@ function createWebApp() {
   app.post("/api/sms/order", orderLimiter, async (req, res) => {
     try {
       const service = (req.body?.service || "").trim();
+      const country = (req.body?.country || "").trim() || config.smsActivateCountryId || "153";
       if (!service) {
         res.status(400).json({ error: "service is required" });
         return;
@@ -426,13 +428,14 @@ function createWebApp() {
 
       console.log("[DEBUG] SMS order request:", {
         service,
+        country,
         userId: req.user.id,
       });
 
-      // Get SMS number
+      // Get SMS number with user's selected country (or default)
       const activation = await getSmsNumber(
         service,
-        config.smsActivateCountryId,
+        country,
       );
 
       // Calculate gem cost
@@ -704,7 +707,7 @@ function createWebApp() {
       return;
     }
     const key = type === "tng" ? "qr_tng_base64" : "qr_bank_base64";
-    const filename = type === "tng" ? "qr-tng.png" : "qr-bank.png";
+    const filename = type === "tng" ? "qr-tng.jpg" : "qr-bank.jpg";
     const { getDb } = require("../db/database");
     getDb()
       .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")

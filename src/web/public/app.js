@@ -305,27 +305,40 @@ async function loadServices() {
       "Could not load services. Check Hero-SMS API key.";
   }
 
-  // Load SMS countries
-  try {
-    const cData = await fetch("/api/sms-countries").then((r) => r.json());
-    renderSmsCountries(cData.countries);
-  } catch {}
-  // Load SMS activation services
+  // Load SMS activation services first (needed to pick service before country)
   try {
     const smsData = await api("/api/sms-services");
     renderSmsServices(smsData.services);
+    // Set the current country from API response
+    if (smsData.currentCountryId && smsCountrySelect) {
+      smsCountrySelect.dataset.currentCountryId = String(smsData.currentCountryId);
+    }
   } catch (err) {
     if (smsError) {
       smsError.textContent = "SMS services unavailable: " + err.message;
       smsError.classList.remove("hidden");
     }
   }
+
+  // Load SMS countries after services
+  try {
+    const cData = await fetch("/api/sms-countries").then((r) => r.json());
+    renderSmsCountries(cData.countries);
+  } catch (err) {
+    if (smsCountrySelect) {
+      smsCountrySelect.innerHTML = '<option value="">Failed to load countries</option>';
+    }
+    console.error("Failed to load SMS countries:", err);
+  }
 }
 
 function renderSmsCountries(countries) {
   if (!smsCountrySelect) return;
   smsCountrySelect.innerHTML = '<option value="">All countries</option>';
-  if (!Array.isArray(countries) || !countries.length) return;
+  if (!Array.isArray(countries) || !countries.length) {
+    console.warn("No SMS countries returned from API");
+    return;
+  }
   countries.forEach((c) => {
     const opt = document.createElement("option");
     opt.value = c.id;
@@ -333,8 +346,8 @@ function renderSmsCountries(countries) {
     smsCountrySelect.appendChild(opt);
   });
   // Set current country if known from API response
-  if (smsCountrySelect.dataset.current) {
-    smsCountrySelect.value = smsCountrySelect.dataset.current;
+  if (smsCountrySelect.dataset.currentCountryId) {
+    smsCountrySelect.value = smsCountrySelect.dataset.currentCountryId;
   }
 }
 
@@ -347,7 +360,7 @@ if (smsCountrySelect) {
         : "/api/sms-services";
       const data = await api(url);
       if (data.currentCountryId)
-        smsCountrySelect.dataset.current = String(data.currentCountryId);
+        smsCountrySelect.dataset.currentCountryId = String(data.currentCountryId);
       renderSmsServices(data.services);
     } catch (err) {
       if (smsError) {
@@ -425,9 +438,10 @@ async function createSmsOrder(event) {
   if (smsError) smsError.classList.add("hidden");
 
   try {
+    const countryId = smsCountrySelect?.value || "";
     const result = await api("/api/sms/order", {
       method: "POST",
-      body: JSON.stringify({ service: selected }),
+      body: JSON.stringify({ service: selected, country: countryId }),
     });
 
     const service = smsServiceList.find((s) => s.code === selected);

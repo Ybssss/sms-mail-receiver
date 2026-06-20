@@ -4,7 +4,7 @@ function getManualPaymentInfo(provider) {
   const baseUrl = config.webappUrl || "";
   if (provider === "manual_tng") {
     const qrUrl = baseUrl
-      ? `${baseUrl}/qr/qr-tng.png`
+      ? `${baseUrl}/qr/qr-tng.jpg`
       : config.manualTngQrUrl || null;
     return {
       id: "manual_tng",
@@ -20,7 +20,7 @@ function getManualPaymentInfo(provider) {
   }
 
   const qrUrl = baseUrl
-    ? `${baseUrl}/qr/qr-bank.png`
+    ? `${baseUrl}/qr/qr-bank.jpg`
     : config.manualBankQrUrl || null;
   return {
     id: "manual_bank",
