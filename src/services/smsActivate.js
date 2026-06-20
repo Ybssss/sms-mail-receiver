@@ -22,7 +22,7 @@ async function smsActivateRequest(action, extraParams = {}) {
   }
 
   const params = new URLSearchParams({
-    apiKey: config.heroSmsApiKey,
+    api_key: config.heroSmsApiKey,
     action,
     ...extraParams,
   });
