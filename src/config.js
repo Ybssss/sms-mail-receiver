@@ -68,6 +68,11 @@ const config = {
   manualBankHolder: process.env.MANUAL_BANK_HOLDER || "",
   manualBankQrUrl: process.env.MANUAL_BANK_QR_URL || "",
 
+  // SMS Activation (SMS-Activate compatible API)
+  smsActivateCountry: process.env.SMS_ACTIVATE_COUNTRY || "MY",
+  smsActivateCountryId: process.env.SMS_ACTIVATE_COUNTRY_ID || "153",
+  smsActivateEnabled: process.env.SMS_ACTIVATE_ENABLED !== "false",
+
   adminTelegramIds: parseAdminIds(process.env.ADMIN_TELEGRAM_IDS),
 };
 

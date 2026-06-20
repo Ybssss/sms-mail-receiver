@@ -31,6 +31,18 @@ const {
   estimateOrderCost,
 } = require("../services/orderService");
 const { getExchangeInfo } = require("../services/exchangeRate");
+const {
+  SmsActivateError,
+  getServices: getSmsServices,
+  getPrices: getSmsPrices,
+  getNumber: getSmsNumber,
+  getStatus: getSmsStatus,
+  getAllSms: getAllSmsMessages,
+  setStatus: setSmsStatus,
+  getServiceName,
+} = require("../services/smsActivate");
+const { myrToGems } = require("../services/exchangeRate");
+const { debitGems, getUserBalance } = require("../services/gems");
 const { validateInitData } = require("../services/telegramWebApp");
 const { getOrCreateTelegramUser } = require("../services/mailStore");
 
@@ -310,6 +322,138 @@ function createWebApp() {
         }),
       );
       res.json({ domains: withGems });
+    } catch (err) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // ── SMS Activation API routes ─────────────────────────────────
+  app.get("/api/sms-services", async (_req, res) => {
+    try {
+      if (!config.smsActivateEnabled) {
+        res.json({ services: [], enabled: false });
+        return;
+      }
+      const services = await getSmsServices(config.smsActivateCountry);
+      const prices = await getSmsPrices(null, config.smsActivateCountry);
+
+      // Combine services with prices
+      const priceMap = {};
+      if (Array.isArray(prices)) {
+        prices.forEach((entry) => {
+          const code = Object.keys(entry)[0];
+          const data = entry[code];
+          priceMap[code] = data;
+        });
+      }
+
+      const enriched = services.map((s) => {
+        const priceData = priceMap[s.code] || {};
+        const costUsd = priceData.cost || 0;
+        // Convert USD cost to gems dynamically
+        return {
+          code: s.code,
+          name: getServiceName(s.code),
+          rawName: s.name || s.code,
+          costUsd,
+          stock: priceData.count || 0,
+          physicalStock: priceData.physicalCount || 0,
+        };
+      });
+
+      res.json({ services: enriched, enabled: true });
+    } catch (err) {
+      console.error("[DEBUG] SMS services error:", err.message);
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/sms/order", orderLimiter, async (req, res) => {
+    try {
+      const service = (req.body?.service || "").trim();
+      if (!service) {
+        res.status(400).json({ error: "service is required" });
+        return;
+      }
+
+      console.log("[DEBUG] SMS order request:", {
+        service,
+        userId: req.user.id,
+      });
+
+      // Get SMS number
+      const activation = await getSmsNumber(
+        service,
+        config.smsActivateCountryId,
+      );
+
+      // Calculate gem cost
+      const usdMyr =
+        await require("../services/exchangeRate").fetchUsdMyrRate();
+      const gemsPerMyrFn = require("../services/exchangeRate").gemsPerMyr;
+      const gemsPerMyrVal = gemsPerMyrFn(usdMyr);
+      const costMyr = activation.cost * (1 + config.orderMarkupPercent / 100);
+      const costGems = Math.max(
+        Math.round(costMyr * gemsPerMyrVal),
+        config.minOrderGems,
+      );
+      const balance = getUserBalance(req.user.id);
+
+      if (balance < costGems) {
+        res.status(402).json({
+          error: `Insufficient gems: need ${costGems.toLocaleString()}, have ${balance.toLocaleString()}`,
+          requiredGems: costGems,
+          balance,
+        });
+        // Cancel the activation since user can't pay
+        setSmsStatus(activation.activationId, "8").catch(() => {});
+        return;
+      }
+
+      // Debit gems and return activation info
+      debitGems(
+        req.user.id,
+        costGems,
+        "sms_activation",
+        activation.activationId,
+        `${service} activation`,
+      );
+
+      res.status(201).json({
+        activationId: activation.activationId,
+        phoneNumber: activation.phoneNumber,
+        costGems,
+        costUsd: activation.cost,
+        service,
+        serviceName: getServiceName(service),
+        activationTime: activation.activationTime,
+        activationEndTime: activation.activationEndTime,
+        canGetAnotherSms: activation.canGetAnotherSms,
+        operator: activation.operator,
+      });
+    } catch (err) {
+      console.error("[DEBUG] SMS order error:", err.message);
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/sms/status/:id", async (req, res) => {
+    try {
+      const activationId = req.params.id;
+      const statusResult = await getSmsStatus(activationId);
+      const messages = await getAllSmsMessages(activationId);
+      res.json({ ...statusResult, messages });
+    } catch (err) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/sms/status/:id", async (req, res) => {
+    try {
+      const activationId = req.params.id;
+      const status = req.body?.status || "8"; // default: cancel
+      const result = await setSmsStatus(activationId, status);
+      res.json({ ok: true, result });
     } catch (err) {
       res.status(502).json({ error: err.message });
     }
