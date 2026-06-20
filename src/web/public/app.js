@@ -144,7 +144,8 @@ function renderWallet(w) {
   const feeHint = document.getElementById("processing-fee-hint");
   if (feeHint) {
     const hasBillplz = w.methods.some((m) => m.id === "billplz");
-    feeHint.style.display = hasBillplz ? "block" : "none";
+    if (hasBillplz) feeHint.classList.remove("hidden");
+    else feeHint.classList.add("hidden");
   }
 }
 
@@ -156,7 +157,7 @@ async function loadWallet() {
 function renderServices(domains) {
   domainList = domains;
   serviceSelect.innerHTML = '<option value="">Select a service...</option>';
-  serviceError.style.display = "none";
+  serviceError.classList.add("hidden");
 
   if (!domains || domains.length === 0) {
     const opt = document.createElement("option");
@@ -298,7 +299,7 @@ async function loadServices() {
     serviceSelect.innerHTML =
       '<option value="">Error loading services</option>';
     serviceError.textContent = "Failed to load services: " + err.message;
-    serviceError.style.display = "block";
+    serviceError.classList.remove("hidden");
     orderCostHint.textContent =
       "Could not load services. Check Hero-SMS API key.";
   }
@@ -310,7 +311,7 @@ async function loadServices() {
   } catch (err) {
     if (smsError) {
       smsError.textContent = "SMS services unavailable: " + err.message;
-      smsError.style.display = "block";
+      smsError.classList.remove("hidden");
     }
   }
 }
@@ -318,12 +319,12 @@ async function loadServices() {
 function renderSmsServices(services) {
   if (!smsServiceSelect) return;
   smsServiceList = services || [];
-  if (smsError) smsError.style.display = "none";
+  if (smsError) smsError.classList.add("hidden");
   if (smsResult) smsResult.textContent = "";
   populateSmsDropdown();
 
   if (smsSearchInput) {
-    smsSearchInput.style.display = "block";
+    smsSearchInput.classList.remove("hidden-input");
     smsSearchInput.placeholder = `Search ${services?.length || 0} services...`;
     smsSearchInput.disabled = false;
   }
@@ -379,7 +380,7 @@ async function createSmsOrder(event) {
   submitBtn.disabled = true;
   submitBtn.textContent = "Ordering SMS...";
   if (smsResult) smsResult.textContent = "Requesting SMS number...";
-  if (smsError) smsError.style.display = "none";
+  if (smsError) smsError.classList.add("hidden");
 
   try {
     const result = await api("/api/sms/order", {
@@ -414,7 +415,7 @@ async function createSmsOrder(event) {
   } catch (err) {
     if (smsError) {
       smsError.textContent = err.message;
-      smsError.style.display = "block";
+      smsError.classList.remove("hidden");
     }
     if (smsResult) smsResult.textContent = "";
   } finally {
@@ -437,7 +438,7 @@ async function checkSmsCode(activationId) {
   } catch (err) {
     if (smsError) {
       smsError.textContent = "Check failed: " + err.message;
-      smsError.style.display = "block";
+      smsError.classList.remove("hidden");
     }
   }
 }

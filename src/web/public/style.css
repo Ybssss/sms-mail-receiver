@@ -219,6 +219,15 @@ button {
   font-size: 0.9rem;
 }
 
+.hidden {
+  display: none !important;
+}
+
+.hidden-input {
+  display: none !important;
+  margin-bottom: 8px;
+}
+
 .empty-state.hidden {
   display: none;
 }
