@@ -60,21 +60,16 @@ async function smsActivateRequest(action, extraParams = {}) {
  * @returns {Array} List of services with code and name
  */
 async function getServices(country) {
+  // Country param is optional (numeric ID). If non-numeric, skip it.
+  const numericCountry =
+    country && !isNaN(Number(country)) ? String(Number(country)) : null;
   const params = {};
-  if (country) {
-    // SMS-Activate API uses numeric country IDs
-    // Common: MY=153, ID=6, US=1, SG=170, TH=14, PH=11, VN=13
-    params.country = country;
+  if (numericCountry) {
+    params.country = numericCountry;
   }
-  const result = await smsActivateRequest("getServicesList", params);
+  console.log("[DEBUG] getServices() params:", params);
 
-  // If country param fails, try without it
-  if (!result?.services && !country) {
-    console.log(
-      "[DEBUG] getServicesList returned unexpected data, trying without country filter",
-    );
-    return [];
-  }
+  const result = await smsActivateRequest("getServicesList", params);
 
   if (result?.status === "success" && Array.isArray(result.services)) {
     console.log(`[DEBUG] Found ${result.services.length} SMS services`);
@@ -82,6 +77,18 @@ async function getServices(country) {
       console.log("[DEBUG] First few:", result.services.slice(0, 5));
     }
     return result.services;
+  }
+
+  // If filtered by country and got nothing, retry without country
+  if (numericCountry) {
+    console.log(
+      "[DEBUG] getServicesList with country returned nothing, retrying without filter",
+    );
+    const retry = await smsActivateRequest("getServicesList", {});
+    if (retry?.status === "success" && Array.isArray(retry.services)) {
+      console.log(`[DEBUG] Retry found ${retry.services.length} services`);
+      return retry.services;
+    }
   }
 
   console.log(
