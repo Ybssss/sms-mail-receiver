@@ -114,6 +114,15 @@ async function getPrices(service, country) {
       : null;
     if (numericCountry && numericCountry !== "NaN") {
       params.country = numericCountry;
+    } else {
+      // Non-numeric country code — try to look up the numeric ID
+      // Default to 153 (Malaysia) if we can't resolve it
+      console.log(
+        "[DEBUG] getPrices got non-numeric country:",
+        country,
+        "falling back to 153",
+      );
+      params.country = "153";
     }
   }
 

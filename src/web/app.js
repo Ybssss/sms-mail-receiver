@@ -328,14 +328,29 @@ function createWebApp() {
   });
 
   // ── SMS Activation API routes ─────────────────────────────────
-  app.get("/api/sms-services", async (_req, res) => {
+  app.get("/api/sms-countries", async (_req, res) => {
+    try {
+      const {
+        getCountries: getSmsCountriesList,
+      } = require("../services/smsActivate");
+      const countries = await getSmsCountriesList();
+      res.json({ countries: Array.isArray(countries) ? countries : [] });
+    } catch (err) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/sms-services", async (req, res) => {
     try {
       if (!config.smsActivateEnabled) {
         res.json({ services: [], enabled: false });
         return;
       }
-      const services = await getSmsServices(config.smsActivateCountry);
-      const prices = await getSmsPrices(null, config.smsActivateCountry);
+      // Use numeric country ID (config or query param override)
+      const queryCountry = req.query.country || "";
+      const countryId = queryCountry || config.smsActivateCountryId || "12";
+      const services = await getSmsServices(countryId);
+      const prices = await getSmsPrices(null, countryId);
 
       // Combine services with prices
       const priceMap = {};
