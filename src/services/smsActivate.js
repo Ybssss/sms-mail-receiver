@@ -108,7 +108,13 @@ async function getPrices(service, country) {
   const params = {};
   if (service) params.service = service;
   // getPrices requires numeric country ID, not alpha-2 code
-  if (country) {
+  // Use default Malaysia (153) when no country specified
+  if (!country || country === "" || country === "undefined") {
+    console.log(
+      "[DEBUG] getPrices no country provided, defaulting to 153 (Malaysia)",
+    );
+    params.country = "153";
+  } else {
     const numericCountry = !isNaN(Number(country))
       ? String(Number(country))
       : null;
