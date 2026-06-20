@@ -256,13 +256,14 @@ async function showDomains(ctx, page = 0) {
 async function showSmsServices(ctx, page = 0) {
   try {
     const { config } = require("../config");
-    let services = await getSmsServices();
+    const country = config.smsActivateCountry || config.smsActivateCountryId;
+    let services = await getSmsServices(country);
     if (!Array.isArray(services)) services = [];
 
     // Fetch prices too
     let prices = [];
     try {
-      prices = await getSmsPrices();
+      prices = await getSmsPrices(null, country);
     } catch {}
     const priceMap = {};
     if (Array.isArray(prices)) {
@@ -738,19 +739,6 @@ function createBot() {
     await editMainMenu(ctx, user);
   });
 
-  function editMainMenuHtml(user) {
-    const name = ctx?.from?.first_name || "there";
-    const isAdminUser =
-      user.telegramId &&
-      config.adminTelegramIds.includes(String(user.telegramId));
-    const userCmds =
-      "🟢 User: /balance · /topup · /order [domain] · /list · /mail · /cancel · /web";
-    const adminCmds = isAdminUser
-      ? "\n🔴 Admin: /approve · /setqr_tng · /setqr_bank"
-      : "";
-    return `Hi ${name}! 👋\n\n${userCmds}${adminCmds}`;
-  }
-
   async function editMainMenu(ctx, user) {
     const name = ctx?.from?.first_name || "there";
     const isAdminUser =
@@ -1185,7 +1173,7 @@ function createBot() {
     await showSmsCountries(ctx, page);
   });
 
-  bot.action(/^sms_country_(\w+)$/, async (ctx) => {
+  bot.action(/^sms_country_(.+)$/, async (ctx) => {
     const countryId = ctx.match[1];
     await ctx.answerCbQuery();
     // Update the used country
