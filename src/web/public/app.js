@@ -500,6 +500,9 @@ function updateOrderCostHint() {
 }
 
 async function runTopup(body) {
+  // Remove any previous QR image
+  const existingQr = document.querySelector(".payment-qr");
+  if (existingQr) existingQr.remove();
   topupResult.textContent = "Creating payment…";
   try {
     const result = await api("/api/topup", {
