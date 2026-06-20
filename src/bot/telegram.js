@@ -142,16 +142,20 @@ function findTokenForOrder(order) {
   return row?.access_token || "";
 }
 
-async function formatBalanceMessage(userId) {
+async function formatBalanceMessage(userId, isAdmin) {
   const wallet = await getWalletInfo(userId);
   const ex = wallet.exchange;
-  return [
+  const lines = [
     `💎 Balance: ${formatGems(wallet.balance)} gems`,
     `Rate: 1 MYR = ${ex.gemsPerMyr.toLocaleString()} gems`,
-    `(USD/MYR ${ex.usdMyr.toFixed(4)}, base ${ex.baseUsdMyr})`,
-    "",
-    `Formula: ${ex.formula}`,
-  ].join("\n");
+  ];
+  if (isAdmin) {
+    lines.push(
+      `(USD/MYR ${ex.usdMyr.toFixed(4)}, base ${ex.baseUsdMyr})`,
+      `Formula: ${ex.formula}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 async function showTopupMenu(ctx, user) {
