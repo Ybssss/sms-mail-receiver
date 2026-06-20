@@ -5,6 +5,7 @@ const {
   getServices: getSmsServices,
   getPrices: getSmsPrices,
   getNumber: getSmsNumber,
+  getCountries: getSmsCountries,
   getServiceName,
   SmsActivateError,
 } = require("../services/smsActivate");
@@ -309,6 +310,11 @@ async function showSmsServices(ctx, page = 0) {
     }
     if (navRow.length) buttons.push(navRow);
 
+    // Add country picker button
+    buttons.push([
+      Markup.button.callback("🌍 Change Country", "sms_countries"),
+    ]);
+
     const text = lines.join("\n");
     try {
       await ctx.editMessageText(text, Markup.inlineKeyboard(buttons));
@@ -321,6 +327,65 @@ async function showSmsServices(ctx, page = 0) {
       await ctx.editMessageText(text);
     } catch {
       await ctx.reply(text);
+    }
+  }
+}
+
+async function showSmsCountries(ctx, page = 0) {
+  try {
+    const countries = await getSmsCountries();
+    const list = Array.isArray(countries) ? countries : [];
+    const totalPages = Math.ceil(list.length / PAGE_SIZE) || 1;
+    const start = page * PAGE_SIZE;
+    const pageItems = list.slice(start, start + PAGE_SIZE);
+
+    const lines = [
+      `🌍 Choose SMS Country (Current: ${config.smsActivateCountry})`,
+      "",
+    ];
+    pageItems.forEach((c) => {
+      const id = typeof c === "object" ? c.id || c.code : c;
+      const name = typeof c === "object" ? c.name || c.eng || c.code : c;
+      lines.push(`• ${name} (ID: ${id})`);
+    });
+    if (totalPages > 1) lines.push(`\nPage ${page + 1} / ${totalPages}`);
+
+    const buttons = pageItems.map((c) => {
+      const id = typeof c === "object" ? c.id || c.code : c;
+      const name = typeof c === "object" ? c.name || c.eng || c.code : c;
+      return [Markup.button.callback(`${name}`, `sms_country_${id}`)];
+    });
+
+    const navRow = [];
+    if (page > 0) {
+      navRow.push(
+        Markup.button.callback("◀ Back", `sms_countries_page_${page - 1}`),
+      );
+    }
+    navRow.push(Markup.button.callback("📱 SMS Services", "sms_services"));
+    if (page < totalPages - 1) {
+      navRow.push(
+        Markup.button.callback("Next ▶", `sms_countries_page_${page + 1}`),
+      );
+    }
+    if (navRow.length) buttons.push(navRow);
+
+    buttons.push([Markup.button.callback("« Menu", "main_menu")]);
+
+    try {
+      await ctx.editMessageText(
+        lines.join("\n"),
+        Markup.inlineKeyboard(buttons),
+      );
+    } catch {
+      await ctx.reply(lines.join("\n"), Markup.inlineKeyboard(buttons));
+    }
+  } catch (err) {
+    const msg = `Country list error: ${err.message}`;
+    try {
+      await ctx.editMessageText(msg);
+    } catch {
+      await ctx.reply(msg);
     }
   }
 }
