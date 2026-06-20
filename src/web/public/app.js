@@ -7,11 +7,12 @@ let domainList = [];
 let tgWebApp = null;
 
 const orderForm = document.getElementById("order-form");
-const domainSelect = document.getElementById("domain-select");
+const serviceSelect = document.getElementById("service-select");
 const ordersList = document.getElementById("orders-list");
 const emptyState = document.getElementById("empty-state");
 const liveStatus = document.getElementById("live-status");
 const pollIntervalEl = document.getElementById("poll-interval");
+const pollIntervalMs = document.getElementById("poll-interval-ms");
 const gemsBalanceEl = document.getElementById("gems-balance");
 const gemsPerMyrEl = document.getElementById("gems-per-myr");
 const topupMethodSelect = document.getElementById("topup-method");
@@ -19,6 +20,7 @@ const customMyrInput = document.getElementById("custom-myr");
 const customTopupBtn = document.getElementById("custom-topup-btn");
 const topupResult = document.getElementById("topup-result");
 const orderCostHint = document.getElementById("order-cost-hint");
+const serviceError = document.getElementById("service-error");
 const refreshBtn = document.getElementById("refresh-btn");
 const tokenPanel = document.getElementById("token-panel");
 const tokenInput = document.getElementById("token-input");
@@ -65,7 +67,7 @@ async function authFromTelegram() {
   if (data.firstName) {
     const subtitle = document.querySelector(".subtitle");
     if (subtitle)
-      subtitle.textContent = `Hi ${data.firstName} — top up gems, order emails, receive codes instantly.`;
+      subtitle.textContent = `Hi ${data.firstName} — top up gems, order SMS numbers, receive codes instantly.`;
   }
 
   return true;
@@ -73,6 +75,14 @@ async function authFromTelegram() {
 
 function fmt(n) {
   return Number(n).toLocaleString("en-MY");
+}
+
+function fmtSeconds(ms) {
+  const s = ms / 1000;
+  if (s < 60) return `${s} seconds`;
+  const m = Math.floor(s / 60);
+  const sec = Math.round(s % 60);
+  return `${m}m ${sec}s`;
 }
 
 function setToken(nextToken) {
@@ -96,7 +106,8 @@ async function api(path, options = {}) {
   });
 
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Request failed");
+  if (!response.ok)
+    throw new Error(data.error || `Request failed (HTTP ${response.status})`);
   return data;
 }
 
@@ -114,11 +125,11 @@ function renderWallet(w) {
     topupMethodSelect.appendChild(opt);
   });
 
-  // If no methods, add placeholder
+  // If no methods, show unavailable message
   if (topupMethodSelect.options.length === 0) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "No payment methods available";
+    opt.textContent = "Top Up Temporarily Unavailable";
     opt.disabled = true;
     topupMethodSelect.appendChild(opt);
   }
@@ -136,18 +147,35 @@ async function loadWallet() {
   renderWallet(w);
 }
 
-function renderDomains(domains) {
+function renderServices(domains) {
   domainList = domains;
-  domainSelect.innerHTML = '<option value="">Select a service...</option>';
+  serviceSelect.innerHTML = '<option value="">Select a service...</option>';
+  serviceError.style.display = "none";
 
-  // Show domain as service name with gem cost
+  if (!domains || domains.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No services available";
+    opt.disabled = true;
+    serviceSelect.appendChild(opt);
+    orderCostHint.textContent = "No services returned from provider.";
+    return;
+  }
+
+  // Show all services with gem cost and stock info
   domains.forEach((d) => {
     const name = d.name || d.domain;
+    const count = d.count != null ? d.count : "?";
     const opt = document.createElement("option");
     opt.value = name;
-    opt.textContent = `${name} — ${fmt(d.costGems)} gems`;
-    domainSelect.appendChild(opt);
+    // Store extra data attributes on the option for the backend
+    opt.dataset.site = d.site || d.name || d.domain || "";
+    opt.dataset.domain = d.domain || d.name || "";
+    opt.textContent = `${name} — ${fmt(d.costGems)} gems (stock: ${count})`;
+    serviceSelect.appendChild(opt);
   });
+
+  updateOrderCostHint();
 }
 
 function renderOrders(orders) {
@@ -162,7 +190,8 @@ function renderOrders(orders) {
 
     const email = document.createElement("div");
     email.className = "order-email";
-    email.textContent = order.email || `${order.domain} (pending)`;
+    email.textContent =
+      order.email || `${order.domain || order.site} (pending)`;
 
     const status = document.createElement("span");
     status.className = `order-status${order.value ? " received" : ""}`;
@@ -175,7 +204,7 @@ function renderOrders(orders) {
     const gemsPart = order.gemsCharged
       ? ` · ${fmt(order.gemsCharged)} gems`
       : "";
-    meta.textContent = `#${order.id} · ${order.site} · ${order.domain}${gemsPart}`;
+    meta.textContent = `#${order.id} · ${order.site || ""} · ${order.domain || ""}${gemsPart}`;
 
     card.append(top, meta);
 
@@ -214,40 +243,66 @@ function renderOrders(orders) {
 }
 
 async function loadOrders() {
-  const data = await api("/api/orders");
-  renderOrders(data.orders);
-  liveStatus.textContent = `Live · ${data.orders.length} orders`;
-  liveStatus.className = "status-pill live";
+  try {
+    const data = await api("/api/orders");
+    renderOrders(data.orders);
+    liveStatus.textContent = `Live · ${data.orders.length} SMS`;
+    liveStatus.className = "status-pill live";
+  } catch (err) {
+    liveStatus.textContent = err.message;
+    liveStatus.className = "status-pill error";
+  }
 }
 
 async function loadHealth() {
-  const health = await fetch("/api/health").then((res) => res.json());
-  pollIntervalEl.textContent = `${health.pollIntervalMs || refreshMs}ms`;
+  try {
+    const health = await fetch("/api/health").then((res) => res.json());
+    refreshMs = health.pollIntervalMs || 2000;
+    updatePollDisplay(refreshMs);
+  } catch {}
+}
+
+function updatePollDisplay(ms) {
+  pollIntervalEl.textContent = fmtSeconds(ms);
+  if (pollIntervalMs) pollIntervalMs.textContent = fmtSeconds(ms);
 }
 
 async function loadConfig() {
-  const config = await fetch("/api/config").then((res) => res.json());
-  refreshMs = config.pollIntervalMs || 2000;
-  pollIntervalEl.textContent = `${refreshMs}ms`;
+  try {
+    const configData = await fetch("/api/config").then((res) => res.json());
+    refreshMs = configData.pollIntervalMs || 2000;
+    updatePollDisplay(refreshMs);
 
-  if (config.botUsername)
-    telegramLink.href = `https://t.me/${config.botUsername}`;
+    if (configData.botUsername)
+      telegramLink.href = `https://t.me/${configData.botUsername}`;
 
-  await loadDomainCosts();
+    await loadServices();
+  } catch (err) {
+    serviceSelect.innerHTML = '<option value="">Failed to load config</option>';
+    orderCostHint.textContent = "Config load error: " + err.message;
+  }
 }
 
-async function loadDomainCosts() {
+async function loadServices() {
   try {
     const data = await api("/api/domains");
-    renderDomains(data.domains);
-    updateOrderCostHint();
-  } catch {
-    orderCostHint.textContent = "Could not load services.";
+    renderServices(data.domains);
+  } catch (err) {
+    serviceSelect.innerHTML =
+      '<option value="">Error loading services</option>';
+    serviceError.textContent = "Failed to load services: " + err.message;
+    serviceError.style.display = "block";
+    orderCostHint.textContent =
+      "Could not load services. Check Hero-SMS API key.";
   }
 }
 
 function updateOrderCostHint() {
-  const selected = domainSelect.value;
+  const selected = serviceSelect.value;
+  if (!selected) {
+    orderCostHint.textContent = "Select a service to see gem cost.";
+    return;
+  }
   const domain = domainList.find((d) => (d.name || d.domain) === selected);
   if (domain) {
     orderCostHint.textContent = `Cost: ${fmt(domain.costGems)} gems`;
@@ -290,7 +345,7 @@ async function runTopup(body) {
 
 async function createOrder(event) {
   event.preventDefault();
-  const selected = domainSelect.value;
+  const selected = serviceSelect.value;
   if (!selected) return;
 
   const submitBtn = orderForm.querySelector("button");
@@ -302,8 +357,8 @@ async function createOrder(event) {
     const site = (domain.site || domain.name || domain.domain || "").trim();
     const dom = (domain.domain || domain.name || "").trim();
 
-    if (!site) throw new Error("Invalid service: missing site");
-    if (!dom) throw new Error("Invalid service: missing domain");
+    if (!site) throw new Error("Invalid service: missing site identifier");
+    if (!dom) throw new Error("Invalid service: missing domain name");
 
     await api("/api/orders", {
       method: "POST",
@@ -371,7 +426,7 @@ refreshBtn.addEventListener("click", () => {
   loadOrders();
   loadWallet();
 });
-domainSelect.addEventListener("change", updateOrderCostHint);
+serviceSelect.addEventListener("change", updateOrderCostHint);
 
 // ── Payment QR image style ──────────────────────────────────────
 const style = document.createElement("style");
@@ -383,6 +438,15 @@ style.textContent = `
     border-radius: 12px;
     display: block;
     margin: 12px 0;
+  }
+  .stat-helper {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .error-hint {
+    color: #ff6b6b;
+    font-size: 0.8rem;
   }
 `;
 document.head.appendChild(style);
@@ -405,6 +469,13 @@ customTopupBtn.addEventListener("click", () => {
   const amountMyr = parseFloat(customMyrInput.value);
   const method = topupMethodSelect.value;
   if (!amountMyr || !method) return;
+  if (
+    topupMethodSelect.options[0]?.disabled &&
+    topupMethodSelect.options[0]?.textContent.includes("Unavailable")
+  ) {
+    topupResult.textContent = "Top Up Temporarily Unavailable";
+    return;
+  }
   if (amountMyr < 5) {
     topupResult.textContent = "Minimum top-up is RM 5";
     return;

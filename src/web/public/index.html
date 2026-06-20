@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hero-SMS Mail Receiver</title>
+    <title>Hero-SMS Receiver</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -20,10 +20,10 @@
       <header class="header">
         <div>
           <p class="eyebrow">Hero-SMS · Gems wallet</p>
-          <h1>Mail inbox</h1>
+          <h1>SMS Inbox</h1>
           <p class="subtitle">
-            Top up gems, order emails, receive codes instantly via webhook + 2s
-            polling.
+            Top up gems, order SMS numbers, receive codes instantly via webhook
+            + auto-refresh.
           </p>
         </div>
         <div class="header-actions">
@@ -49,8 +49,11 @@
           <strong id="gems-balance">💎 —</strong>
         </article>
         <article class="stat-card">
-          <span class="stat-label">Poll interval</span>
+          <span class="stat-label">Auto-refresh SMS</span>
           <strong id="poll-interval">—</strong>
+          <p class="stat-helper">
+            SMS inbox is checked every <span id="poll-interval-ms">—</span>
+          </p>
         </article>
       </section>
 
@@ -72,35 +75,32 @@
           * A 3.5% processing fee is added for Billplz payments (FPX, Card, TnG,
           GrabPay).
         </p>
-        <p class="hint">
-          Billplz supports FPX, card, TnG, GrabPay → settles to your bank.
-          Manual TnG/bank goes directly to your accounts.
-        </p>
       </section>
 
       <section class="panel">
-        <h2>Order email</h2>
+        <h2>Order SMS number</h2>
         <form id="order-form" class="order-form">
-          <select id="domain-select" aria-label="Select a service" required>
-            <option value="">Select a service...</option>
+          <select id="service-select" aria-label="Select a service" required>
+            <option value="">Loading services...</option>
           </select>
           <button type="submit">Order now</button>
         </form>
         <p class="hint" id="order-cost-hint">
           Select a service to see gem cost.
         </p>
+        <p class="hint error-hint" id="service-error" style="display: none"></p>
       </section>
 
       <section class="panel">
         <div class="panel-head">
-          <h2>Active orders</h2>
+          <h2>Active SMS</h2>
           <button type="button" id="refresh-btn" class="btn-secondary">
             Refresh
           </button>
         </div>
         <div id="orders-list" class="orders-list"></div>
         <p id="empty-state" class="empty-state">
-          No orders yet. Top up gems and order above.
+          No active SMS yet. Top up gems and order above.
         </p>
       </section>
 
