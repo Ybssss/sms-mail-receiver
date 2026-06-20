@@ -69,10 +69,45 @@ function normalizeEmailOrder(raw) {
   };
 }
 
-async function getDomains() {
-  const result = await heroRequest("GET", "/emails/domains");
+async function getDomains(site) {
+  // Hero-SMS requires a site parameter for /emails/domains
+  // Try GET with site query param first, fall back to POST with site in body
+  const siteParam = (site || config.defaultSite || "").trim();
+  console.log("[DEBUG] getDomains() called with site:", siteParam);
+
+  // Attempt GET with site as query parameter
+  if (siteParam) {
+    const path = `/emails/domains?site=${encodeURIComponent(siteParam)}`;
+    console.log("[DEBUG] getDomains() GET:", path);
+    try {
+      const result = await heroRequest("GET", path);
+      console.log(
+        "[DEBUG] getDomains() GET succeeded:",
+        JSON.stringify(result).slice(0, 500),
+      );
+      if (Array.isArray(result) && result.length > 0) {
+        console.log(
+          "[DEBUG] First domain object keys:",
+          Object.keys(result[0]),
+        );
+        console.log("[DEBUG] First domain object:", JSON.stringify(result[0]));
+      }
+      return result;
+    } catch (getErr) {
+      console.log(
+        "[DEBUG] getDomains() GET failed, trying POST:",
+        getErr.message,
+      );
+    }
+  }
+
+  // Fallback: POST with site in body (Hero-SMS may require this)
+  const path = "/emails/domains";
+  console.log("[DEBUG] getDomains() POST:", path, "site:", siteParam);
+  const body = siteParam ? { site: siteParam } : {};
+  const result = await heroRequest("POST", path, body);
   console.log(
-    "[DEBUG] getDomains() raw response:",
+    "[DEBUG] getDomains() POST response:",
     JSON.stringify(result).slice(0, 2000),
   );
   if (Array.isArray(result) && result.length > 0) {
@@ -82,8 +117,12 @@ async function getDomains() {
   return result;
 }
 
-async function listActiveEmails() {
-  return heroRequest("GET", "/emails");
+async function listActiveEmails(site) {
+  const siteParam = (site || config.defaultSite || "").trim();
+  const path = siteParam
+    ? `/emails?site=${encodeURIComponent(siteParam)}`
+    : "/emails";
+  return heroRequest("GET", path);
 }
 
 async function getEmail(heroId) {
