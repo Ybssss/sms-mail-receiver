@@ -2,6 +2,13 @@ const { Telegraf, Markup } = require("telegraf");
 const { config } = require("../config");
 const { getDomains, getEmail } = require("../services/heroSms");
 const {
+  getServices: getSmsServices,
+  getPrices: getSmsPrices,
+  getNumber: getSmsNumber,
+  getServiceName,
+  SmsActivateError,
+} = require("../services/smsActivate");
+const {
   getOrCreateTelegramUser,
   saveOrder,
   listOrders,
@@ -179,22 +186,30 @@ async function showOrderList(ctx, user) {
   await ctx.reply(text, extra);
 }
 
-async function showDomains(ctx) {
+// ── Paginated domain display ─────────────────────────────────
+const PAGE_SIZE = 6;
+
+async function showDomains(ctx, page = 0) {
   try {
     const domains = await getDomains();
     const ex = await getExchangeInfo();
-    const list = (Array.isArray(domains) ? domains : []).slice(0, 12);
+    const list = Array.isArray(domains) ? domains : [];
+    const totalPages = Math.ceil(list.length / PAGE_SIZE) || 1;
+
+    const start = page * PAGE_SIZE;
+    const pageItems = list.slice(start, start + PAGE_SIZE);
 
     const lines = await Promise.all(
-      list.map(async (d) => {
+      pageItems.map(async (d) => {
         const name = d.name || d.domain;
         const { costGems } = await estimateOrderCost(name);
         return `• ${name} — ${costGems.toLocaleString()} gems, stock ${d.count}`;
       }),
     );
     lines.unshift(`Rate: 1 MYR = ${ex.gemsPerMyr.toLocaleString()} gems`);
+    if (totalPages > 1) lines.push(`\nPage ${page + 1} / ${totalPages}`);
 
-    const domainButtons = list.slice(0, 6).map((d) => {
+    const buttons = pageItems.map((d) => {
       const name = d.name || d.domain;
       return [
         Markup.button.callback(
@@ -203,14 +218,89 @@ async function showDomains(ctx) {
         ),
       ];
     });
-    domainButtons.push([Markup.button.callback("« Menu", "main_menu")]);
 
-    await ctx.reply(
-      lines.length > 1 ? lines.join("\n") : "No domains returned.",
-      Markup.inlineKeyboard(domainButtons),
-    );
+    const navRow = [];
+    if (page > 0) {
+      navRow.push(Markup.button.callback("◀ Back", `domains_page_${page - 1}`));
+    }
+    navRow.push(Markup.button.callback("📋 Email", "main_menu"));
+    if (page < totalPages - 1) {
+      navRow.push(Markup.button.callback("Next ▶", `domains_page_${page + 1}`));
+    }
+    if (navRow.length) buttons.push(navRow);
+
+    // SMS services link
+    buttons.push([Markup.button.callback("📱 SMS Services", "sms_services")]);
+
+    const text = lines.length > 1 ? lines.join("\n") : "No domains returned.";
+    try {
+      await ctx.editMessageText(text, Markup.inlineKeyboard(buttons));
+    } catch {
+      await ctx.reply(text, Markup.inlineKeyboard(buttons));
+    }
   } catch (err) {
-    await ctx.reply(`Hero-SMS error: ${err.message}`);
+    const text = `Hero-SMS error: ${err.message}`;
+    try {
+      await ctx.editMessageText(text);
+    } catch {
+      await ctx.reply(text);
+    }
+  }
+}
+
+async function showSmsServices(ctx, page = 0) {
+  try {
+    const { config } = require("../config");
+    let services = await getSmsServices();
+    if (!Array.isArray(services)) services = [];
+    const list = services.map((s) => ({
+      code: s.code,
+      name: getServiceName(s.code),
+    }));
+    const totalPages = Math.ceil(list.length / PAGE_SIZE) || 1;
+    const start = page * PAGE_SIZE;
+    const pageItems = list.slice(start, start + PAGE_SIZE);
+
+    const lines = [
+      `📱 SMS Activation Services`,
+      `Total: ${list.length} services\n`,
+    ];
+    pageItems.forEach((s) => {
+      lines.push(`• ${s.name} (${s.code})`);
+    });
+    if (totalPages > 1) lines.push(`\nPage ${page + 1} / ${totalPages}`);
+
+    const buttons = pageItems.map((s) => [
+      Markup.button.callback(`📱 ${s.name}`, `sms_order_${s.code}`),
+    ]);
+
+    const navRow = [];
+    if (page > 0) {
+      navRow.push(
+        Markup.button.callback("◀ Back", `sms_services_page_${page - 1}`),
+      );
+    }
+    navRow.push(Markup.button.callback("📋 Email", "domains"));
+    if (page < totalPages - 1) {
+      navRow.push(
+        Markup.button.callback("Next ▶", `sms_services_page_${page + 1}`),
+      );
+    }
+    if (navRow.length) buttons.push(navRow);
+
+    const text = lines.join("\n");
+    try {
+      await ctx.editMessageText(text, Markup.inlineKeyboard(buttons));
+    } catch {
+      await ctx.reply(text, Markup.inlineKeyboard(buttons));
+    }
+  } catch (err) {
+    const text = `SMS services error: ${err.message}`;
+    try {
+      await ctx.editMessageText(text);
+    } catch {
+      await ctx.reply(text);
+    }
   }
 }
 
@@ -1044,6 +1134,135 @@ function createBot() {
       }
     }
   }
+
+  bot.action(/^domains_page_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const page = parseInt(ctx.match[1], 10);
+    await showDomains(ctx, page);
+  });
+
+  bot.action(/^sms_services_page_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const page = parseInt(ctx.match[1], 10);
+    await showSmsServices(ctx, page);
+  });
+
+  bot.action("sms_services", async (ctx) => {
+    await ctx.answerCbQuery();
+    await showSmsServices(ctx, 0);
+  });
+
+  bot.action(/^sms_order_([a-z_0-9]+)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const serviceCode = ctx.match[1];
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      `Ordering ${getServiceName(serviceCode)} SMS number...`,
+    );
+    try {
+      const activation = await getSmsNumber(
+        serviceCode,
+        config.smsActivateCountryId,
+      );
+      // Calculate cost in gems
+      const {
+        fetchUsdMyrRate,
+        gemsPerMyr,
+      } = require("../services/exchangeRate");
+      const usdMyr = await fetchUsdMyrRate();
+      const gpm = gemsPerMyr(usdMyr);
+      const costGems = Math.max(
+        Math.round(
+          activation.cost * gpm * (1 + config.orderMarkupPercent / 100),
+        ),
+        config.minOrderGems,
+      );
+      const balance = getUserBalance(user.id);
+      if (balance < costGems) {
+        await ctx.editMessageText(
+          `Not enough gems. Need ${costGems.toLocaleString()}, have ${balance.toLocaleString()}.`,
+          mainInlineKeyboard(user.accessToken),
+        );
+        // Cancel
+        require("../services/smsActivate")
+          .setStatus(activation.activationId, "8")
+          .catch(() => {});
+        return;
+      }
+      debitGems(
+        user.id,
+        costGems,
+        "sms_activation",
+        activation.activationId,
+        `${serviceCode} SMS activation`,
+      );
+      await ctx.editMessageText(
+        [
+          `✅ ${getServiceName(serviceCode)} SMS Activated!`,
+          `📱 ${activation.phoneNumber}`,
+          `💎 ${costGems.toLocaleString()} gems`,
+          `⏳ Expires: ${activation.activationEndTime ? new Date(activation.activationEndTime).toLocaleString() : "20 min"}`,
+          `🆔 ${activation.activationId}`,
+          "",
+          "Use /smsstatus <id> to check SMS code.",
+        ].join("\n"),
+        Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              "🔄 Check SMS",
+              `sms_check_${activation.activationId}`,
+            ),
+          ],
+          [Markup.button.callback("« Menu", "main_menu")],
+        ]),
+      );
+    } catch (err) {
+      await ctx.editMessageText(
+        `Order failed: ${err.message}`,
+        mainInlineKeyboard(user.accessToken),
+      );
+    }
+  });
+
+  bot.action(/^sms_check_(\d+)$/, async (ctx) => {
+    const activationId = parseInt(ctx.match[1], 10);
+    await ctx.answerCbQuery();
+    try {
+      const status = await require("../services/smsActivate").getStatus(
+        activationId,
+      );
+      if (status.status === "OK") {
+        await ctx.editMessageText(
+          `✅ SMS Code: ${status.smsCode}`,
+          mainInlineKeyboard(getOrCreateTelegramUser(ctx.from.id).accessToken),
+        );
+      } else {
+        await ctx.answerCbQuery(
+          `Status: ${status.status} — try again in a few seconds`,
+        );
+      }
+    } catch (err) {
+      await ctx.answerCbQuery(`Error: ${err.message}`);
+    }
+  });
+
+  bot.command("smsstatus", async (ctx) => {
+    const id = ctx.message.text.replace(/^\/smsstatus\s*/i, "").trim();
+    if (!id) {
+      await ctx.reply("Usage: /smsstatus <activationId>");
+      return;
+    }
+    try {
+      const status = await require("../services/smsActivate").getStatus(id);
+      await ctx.reply(
+        status.status === "OK"
+          ? `✅ Code: ${status.smsCode}`
+          : `⏳ Status: ${status.status}`,
+      );
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
+  });
 
   bot.action(/^order_domain_(.+)$/, async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
