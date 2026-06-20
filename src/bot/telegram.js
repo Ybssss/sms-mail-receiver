@@ -7,7 +7,6 @@ const {
   getNumber: getSmsNumber,
   getCountries: getSmsCountries,
   getServiceName,
-  SmsActivateError,
 } = require("../services/smsActivate");
 const {
   getOrCreateTelegramUser,
@@ -18,7 +17,7 @@ const {
   formatOrderList,
 } = require("../services/mailStore");
 const { setNotifier } = require("../services/notifier");
-const { getUserBalance, formatGems } = require("../services/gems");
+const { getUserBalance, formatGems, debitGems } = require("../services/gems");
 const { getExchangeInfo } = require("../services/exchangeRate");
 const {
   placeOrder,
@@ -35,88 +34,121 @@ const {
 } = require("../services/payments");
 const { listPendingManualPayments } = require("../services/payments/store");
 const { buildStarsPayload } = require("../services/payments/telegramStars");
+const {
+  isUserBlocked,
+  blockUser,
+  unblockUser,
+  listBlockedUsers,
+  saveUserPreference,
+  getUserPreferences,
+} = require("../db/database");
 
-const BTN = {
-  BALANCE: "💎 Balance",
-  TOPUP: "➕ Top up",
-  ORDER: "🛒 Order mail",
-  LIST: "📬 Active mail",
-  DOMAINS: "📋 Domains",
-  WEB: "🌐 Open app",
+const LANG = {
+  en: {
+    hi: (name) =>
+      `Hi ${name}! 👋\n\nWelcome to SMS Mail Receiver.\nUse the buttons below or open the web dashboard:\n🌐 Open App`,
+    balance: (bal, rate) =>
+      `💎 Balance: ${bal} gems\n📊 Rate: 1 MYR = ${rate} gems`,
+    noGems: "You have no gems. Tap ➕ Top up to buy gems.",
+    topup: (rate, methods) =>
+      `Choose a package:\nRate: 1 MYR = ${rate} gems\n\n${methods.map((m) => `• ${m.name}`).join("\n") || "Configure payment env vars."}`,
+    orderEmail:
+      "📧 **Email Activation**\nOpen the web dashboard to browse available domains and order.",
+    orderSms:
+      "📱 **SMS Activation**\nOpen the web dashboard to browse SMS services, check prices, and order numbers.",
+    domains: (list) =>
+      `Available email domains:\n\n${list
+        .slice(0, 12)
+        .map((d) => `• ${d.name || d.domain} — stock ${d.count || "?"}`)
+        .join(
+          "\n",
+        )}\n\n🌐 Open the web app for full pricing and one-tap ordering.`,
+    orders: (orders) =>
+      orders.length
+        ? `Your active orders:\n${orders
+            .slice(0, 10)
+            .map((o) => formatOrder(o))
+            .join("\n\n")}`
+        : "No active orders.",
+    orderPlaced: (order) =>
+      `✅ Order placed!\n${formatOrder(order)}\n\nWatching for incoming mail...`,
+    smsActivated: (name, phone, cost, id, expires) =>
+      `✅ ${name} SMS Activated!\n📱 ${phone}\n💎 ${cost} gems\n⏳ Expires: ${expires}\n🆔 ${id}\n\nCheck code on dashboard.`,
+    blocked: "You are blocked from using this bot.",
+    help: "Commands: /start /balance /topup /domains /list /web\nAdmin: /approve /block /unblock /blocked /countries",
+  },
+  "zh-CN": {
+    hi: (name) =>
+      `你好 ${name}！👋\n\n欢迎使用SMS邮件接收器。\n使用下方按钮或打开网页面板：\n🌐 打开应用`,
+    balance: (bal, rate) =>
+      `💎 余额: ${bal} 宝石\n📊 汇率: 1 MYR = ${rate} 宝石`,
+    noGems: "您没有宝石。请点击 ➕ 充值。",
+    topup: (rate, methods) =>
+      `选择套餐：\n汇率: 1 MYR = ${rate} 宝石\n\n${methods.map((m) => `• ${m.name}`).join("\n") || "请配置支付环境。"}`,
+    orderEmail: "📧 **邮箱激活**\n打开网页面板浏览可用域名并下单。",
+    orderSms: "📱 **短信激活**\n打开网页面板浏览短信服务，查看价格并下单。",
+    domains: (list) =>
+      `可用邮箱域名：\n\n${list
+        .slice(0, 12)
+        .map((d) => `• ${d.name || d.domain} — 库存 ${d.count || "?"}`)
+        .join("\n")}\n\n🌐 打开网页应用查看完整价格并一键下单。`,
+    orders: (orders) =>
+      orders.length
+        ? `您的活跃订单：\n${orders
+            .slice(0, 10)
+            .map((o) => formatOrder(o))
+            .join("\n\n")}`
+        : "无活跃订单。",
+    orderPlaced: (order) =>
+      `✅ 下单成功！\n${formatOrder(order)}\n\n等待接收邮件...`,
+    smsActivated: (name, phone, cost, id, expires) =>
+      `✅ ${name} 短信已激活！\n📱 ${phone}\n💎 ${cost} 宝石\n⏳ 过期时间: ${expires}\n🆔 ${id}`,
+    blocked: "您已被禁止使用此机器人。",
+    help: "命令: /start /balance /topup /domains /list /web\n管理员: /approve /block /unblock /blocked /countries",
+  },
 };
+
+function t(userLang, key, ...args) {
+  const lang = LANG[userLang] || LANG.en;
+  const fn = lang[key] || LANG.en[key];
+  if (typeof fn === "function") return fn(...args);
+  return fn || key;
+}
+
+let userLangs = {};
+
+function getUserLang(telegramId) {
+  if (userLangs[telegramId]) return userLangs[telegramId];
+  try {
+    const prefs = getUserPreferences(telegramId);
+    const lang = prefs.language || "en";
+    userLangs[telegramId] = lang;
+    return lang;
+  } catch {
+    return "en";
+  }
+}
 
 function webAppUrl(token) {
   if (!config.webappUrl) return null;
   return `${config.webappUrl}/?token=${token}`;
 }
 
-function webLink(token) {
-  const url = webAppUrl(token);
-  return url || "Set WEBAPP_URL on Render, then redeploy.";
-}
-
-function webhookUrl() {
-  if (!config.webappUrl) return "Not configured";
-  return `${config.webappUrl}/webhook/hero-sms`;
-}
-
-function mainInlineKeyboard(token) {
-  const buttons = [
-    [
-      Markup.button.callback("💎 Balance", "balance"),
-      Markup.button.callback("➕ Top up", "topup_menu"),
-    ],
-    [
-      Markup.button.callback("📬 Active mail", "list"),
-      Markup.button.callback("🛒 Order mail", "order_menu"),
-    ],
-    [
-      Markup.button.callback("📋 Domains", "domains"),
-      Markup.button.callback("❓ Help", "help_menu"),
-    ],
+function replyKeyboard(token, userId) {
+  const appUrl = webAppUrl(token);
+  const lang = getUserLang(userId);
+  const isZh = lang === "zh-CN";
+  const rows = [
+    [isZh ? "💎 余额" : "💎 Balance", isZh ? "➕ 充值" : "➕ Top up"],
+    [isZh ? "📬 活跃邮件" : "📬 Active mail", isZh ? "🛒 下单" : "🛒 Order"],
+    [isZh ? "📋 域名" : "📋 Domains", isZh ? "🌐 打开应用" : "🌐 Open App"],
   ];
-  const appUrl = webAppUrl(token);
-  if (appUrl) buttons.push([Markup.button.webApp("🌐 Open dashboard", appUrl)]);
-  return Markup.inlineKeyboard(buttons);
-}
-
-function replyMainMenu(token) {
-  const row1 = [BTN.BALANCE, BTN.TOPUP];
-  const row2 = [BTN.ORDER, BTN.LIST];
-  const row3 = [BTN.DOMAINS];
-  const appUrl = webAppUrl(token);
-  if (appUrl) row3.push(Markup.button.webApp(BTN.WEB, appUrl));
-  return Markup.keyboard([row1, row2, row3]).resize().persistent();
-}
-
-function orderListKeyboard(orders) {
-  const rows = orders.slice(0, 8).map((order) => {
-    const buttons = [
-      Markup.button.callback(`🔄 #${order.id}`, `mail_${order.id}`),
-    ];
-    if (!order.value && String(order.status).toUpperCase() !== "CANCELLED") {
-      buttons.push(
-        Markup.button.callback(`❌ #${order.id}`, `cancel_${order.id}`),
-      );
-    }
-    return buttons;
-  });
-  rows.push([
-    Markup.button.callback("🛒 New order", "order_menu"),
-    Markup.button.callback("« Menu", "main_menu"),
-  ]);
-  return Markup.inlineKeyboard(rows);
-}
-
-function formatMailAlert(order, source) {
-  return [
-    "📨 Mail received!",
-    "",
-    formatOrder(order),
-    "",
-    `Source: ${source}`,
-    `Dashboard: ${webLink(findTokenForOrder(order))}`,
-  ].join("\n");
+  if (appUrl)
+    rows[2][1] = Markup.button.webApp(
+      isZh ? "🌐 打开应用" : "🌐 Open App",
+      appUrl,
+    );
+  return Markup.keyboard(rows).resize();
 }
 
 function findTokenForOrder(order) {
@@ -129,267 +161,54 @@ function findTokenForOrder(order) {
   return row?.access_token || "";
 }
 
-async function formatBalanceMessage(userId, isAdmin) {
+function formatMailAlert(order, source) {
+  return [
+    "📨 Mail received!",
+    "",
+    formatOrder(order),
+    "",
+    `Source: ${source}`,
+  ].join("\n");
+}
+
+async function formatBalance(userId, lang) {
   const wallet = await getWalletInfo(userId);
-  const ex = wallet.exchange;
-  const lines = [
-    `💎 Balance: ${formatGems(wallet.balance)} gems`,
-    `Rate: 1 MYR = ${ex.gemsPerMyr.toLocaleString()} gems`,
-  ];
-  if (isAdmin) {
-    lines.push(
-      `(USD/MYR ${ex.usdMyr.toFixed(4)}, base ${ex.baseUsdMyr})`,
-      `Formula: ${ex.formula}`,
-    );
-  }
-  return lines.join("\n");
+  return t(
+    lang,
+    "balance",
+    formatGems(wallet.balance),
+    wallet.exchange.gemsPerMyr.toLocaleString(),
+  );
 }
 
-async function showTopupMenu(ctx, user) {
-  const wallet = await getWalletInfo(user.id);
-  const buttons = wallet.packages.map((pkg) => [
-    Markup.button.callback(
-      `${pkg.name} — RM${pkg.priceMyr}`,
-      `topup_pkg_${pkg.id}`,
-    ),
+async function forwardToAdmins(bot, ctx) {
+  if (!config.adminTelegramIds.length) return;
+  const user = ctx.from;
+  const msg = ctx.message;
+  if (!msg || !msg.text) return;
+  const replyCode =
+    "usr_" +
+    (user.id % 100000).toString(36) +
+    "_" +
+    (Date.now() % 100000).toString(36);
+  const text = `📩 #${user.first_name || "User"} ${user.last_name || ""} (ID: ${user.id})\nChatID: ${user.id}\nCode: #${replyCode}\n\nMessage: ${msg.text}`;
+  const kb = Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        "✅ Done Reply",
+        `admin_reply_${user.id}_${replyCode}`,
+      ),
+    ],
+    [
+      Markup.button.callback("🚫 Block User", `admin_block_${user.id}`),
+      Markup.button.callback("🔓 Unblock", `admin_unblock_${user.id}`),
+    ],
   ]);
-  buttons.push([Markup.button.callback("Custom amount (web)", "topup_web")]);
-  buttons.push([Markup.button.callback("« Menu", "main_menu")]);
-  await ctx.reply(
-    [
-      "Choose a gem package:",
-      `Current rate: 1 MYR = ${wallet.exchange.gemsPerMyr.toLocaleString()} gems`,
-      "",
-      wallet.methods.map((m) => `• ${m.name}`).join("\n") ||
-        "Configure payment env vars on server.",
-    ].join("\n"),
-    Markup.inlineKeyboard(buttons),
-  );
-}
-
-async function showOrderList(ctx, user) {
-  const orders = listOrders(user.id, { limit: 20 });
-  const text = formatOrderList(orders);
-  const extra = orders.length
-    ? orderListKeyboard(orders)
-    : mainInlineKeyboard(user.accessToken);
-  await ctx.reply(text, extra);
-}
-
-const PAGE_SIZE = 6;
-
-async function showDomains(ctx, page = 0) {
-  try {
-    const domains = await getDomains();
-    const ex = await getExchangeInfo();
-    const list = Array.isArray(domains) ? domains : [];
-    const totalPages = Math.ceil(list.length / PAGE_SIZE) || 1;
-    const start = page * PAGE_SIZE;
-    const pageItems = list.slice(start, start + PAGE_SIZE);
-    const lines = await Promise.all(
-      pageItems.map(async (d) => {
-        const name = d.name || d.domain;
-        const { costGems } = await estimateOrderCost(name);
-        return `• ${name} — ${costGems.toLocaleString()} gems, stock ${d.count}`;
-      }),
-    );
-    lines.unshift(`Rate: 1 MYR = ${ex.gemsPerMyr.toLocaleString()} gems`);
-    if (totalPages > 1) lines.push(`\nPage ${page + 1} / ${totalPages}`);
-
-    const buttons = pageItems.map((d) => {
-      const name = d.name || d.domain;
-      return [
-        Markup.button.callback(
-          `Order @ ${name}`,
-          `order_domain_${encodeURIComponent(name)}`,
-        ),
-      ];
-    });
-    const navRow = [];
-    if (page > 0)
-      navRow.push(Markup.button.callback("◀ Back", `domains_page_${page - 1}`));
-    navRow.push(Markup.button.callback("📋 Menu", "main_menu"));
-    if (page < totalPages - 1)
-      navRow.push(Markup.button.callback("Next ▶", `domains_page_${page + 1}`));
-    if (navRow.length) buttons.push(navRow);
-    buttons.push([Markup.button.callback("📱 SMS Services", "sms_services")]);
-
-    const text = lines.length > 1 ? lines.join("\n") : "No domains returned.";
-    await ctx
-      .editMessageText(text, Markup.inlineKeyboard(buttons))
-      .catch(() => ctx.reply(text, Markup.inlineKeyboard(buttons)));
-  } catch (err) {
-    await ctx
-      .editMessageText(`Hero-SMS error: ${err.message}`)
-      .catch(() => ctx.reply(`Hero-SMS error: ${err.message}`));
-  }
-}
-
-async function showSmsServices(ctx, page = 0) {
-  try {
-    const countryId = config.smsActivateCountryId; // numeric ID for API
-    let services = await getSmsServices(countryId);
-    if (!Array.isArray(services)) services = [];
-
-    let prices = [];
+  for (const adminId of config.adminTelegramIds) {
     try {
-      prices = await getSmsPrices(null, countryId);
+      await bot.telegram.sendMessage(adminId, text, kb);
     } catch {}
-    const priceMap = {};
-    if (Array.isArray(prices)) {
-      prices.forEach((p) => {
-        const code = Object.keys(p)[0];
-        priceMap[code] = p[code];
-      });
-    }
-
-    const list = services.map((s) => ({
-      code: s.code,
-      name: getServiceName(s.code, s.name),
-      price: priceMap[s.code],
-    }));
-    const totalPages = Math.ceil(list.length / PAGE_SIZE) || 1;
-    const start = page * PAGE_SIZE;
-    const pageItems = list.slice(start, start + PAGE_SIZE);
-
-    const countryLabel =
-      config.smsActivateCountryName ||
-      config.smsActivateCountryId ||
-      "all countries";
-    const lines = [
-      `📱 SMS Activation Services (${countryLabel})`,
-      `Total: ${list.length} services\n`,
-    ];
-    pageItems.forEach((s) => {
-      const cost = s.price?.cost ? `$${Number(s.price.cost).toFixed(2)}` : "?";
-      const stock = s.price?.count || "?";
-      lines.push(`• ${s.name} [${s.code}] — ${cost} (stock: ${stock})`);
-    });
-    if (totalPages > 1) lines.push(`\nPage ${page + 1} / ${totalPages}`);
-
-    const buttons = pageItems.map((s) => [
-      Markup.button.callback(`📱 ${s.name}`, `sms_order_${s.code}`),
-    ]);
-    const navRow = [];
-    if (page > 0)
-      navRow.push(
-        Markup.button.callback("◀ Back", `sms_services_page_${page - 1}`),
-      );
-    navRow.push(Markup.button.callback("📋 Email", "domains"));
-    if (page < totalPages - 1)
-      navRow.push(
-        Markup.button.callback("Next ▶", `sms_services_page_${page + 1}`),
-      );
-    if (navRow.length) buttons.push(navRow);
-    buttons.push([
-      Markup.button.callback("🌍 Change Country", "sms_countries"),
-    ]);
-
-    const text = lines.join("\n");
-    await ctx
-      .editMessageText(text, Markup.inlineKeyboard(buttons))
-      .catch(() => ctx.reply(text, Markup.inlineKeyboard(buttons)));
-  } catch (err) {
-    await ctx
-      .editMessageText(`SMS services error: ${err.message}`)
-      .catch(() => ctx.reply(`SMS services error: ${err.message}`));
   }
-}
-
-async function showSmsCountries(ctx, page = 0) {
-  try {
-    const countries = await getSmsCountries();
-    const list = Array.isArray(countries) ? countries : [];
-    const totalPages = Math.ceil(list.length / PAGE_SIZE) || 1;
-    const start = page * PAGE_SIZE;
-    const pageItems = list.slice(start, start + PAGE_SIZE);
-
-    const currentId = config.smsActivateCountryId || config.smsActivateCountry;
-    const lines = [
-      `🌍 Choose SMS Country (Current: ${config.smsActivateCountryName || currentId || "none"})`,
-      "",
-    ];
-    pageItems.forEach((c) => {
-      const id = typeof c === "object" ? c.id : c;
-      const name =
-        (typeof c === "object" ? c.eng || c.rus || c.chn : c) || String(id);
-      lines.push(`• ${name} (ID: ${id})`);
-    });
-    if (totalPages > 1) lines.push(`\nPage ${page + 1} / ${totalPages}`);
-
-    const buttons = pageItems.map((c) => {
-      const id = typeof c === "object" ? c.id : c;
-      const name =
-        (typeof c === "object" ? c.eng || c.rus || c.chn : c) || String(id);
-      return [Markup.button.callback(`${name}`, `sms_country_${id}`)];
-    });
-    const navRow = [];
-    if (page > 0)
-      navRow.push(
-        Markup.button.callback("◀ Back", `sms_countries_page_${page - 1}`),
-      );
-    navRow.push(Markup.button.callback("📱 SMS Services", "sms_services"));
-    if (page < totalPages - 1)
-      navRow.push(
-        Markup.button.callback("Next ▶", `sms_countries_page_${page + 1}`),
-      );
-    if (navRow.length) buttons.push(navRow);
-    buttons.push([Markup.button.callback("« Menu", "main_menu")]);
-
-    await ctx
-      .editMessageText(lines.join("\n"), Markup.inlineKeyboard(buttons))
-      .catch(() => ctx.reply(lines.join("\n"), Markup.inlineKeyboard(buttons)));
-  } catch (err) {
-    await ctx
-      .editMessageText(`Country list error: ${err.message}`)
-      .catch(() => ctx.reply(`Country list error: ${err.message}`));
-  }
-}
-
-async function showOrderMenu(ctx, user) {
-  await ctx.reply(
-    [
-      "📦 **Order a service**",
-      "",
-      "Choose what you want:",
-      "📧 **Email** — receive verification codes via disposable email",
-      "📱 **SMS** — receive SMS codes for app signups",
-    ].join("\n"),
-    Markup.inlineKeyboard([
-      [Markup.button.callback("📧 Email Activation", "domains")],
-      [Markup.button.callback("📱 SMS Activation", "sms_services")],
-      [Markup.button.callback("« Menu", "main_menu")],
-    ]),
-  );
-}
-
-async function showMainMenu(ctx, user, greeting) {
-  const name = greeting || ctx.from?.first_name || "there";
-  const inline = mainInlineKeyboard(user.accessToken);
-  const reply = replyMainMenu(user.accessToken);
-  const isAdminUser =
-    user.telegramId &&
-    config.adminTelegramIds.includes(String(user.telegramId));
-  const userCommands = [
-    "🟢 User commands:",
-    "/balance · /topup · /order [domain]",
-    "/list · /mail <id> · /domains · /cancel <id> · /web",
-  ];
-  const adminCommands = isAdminUser
-    ? ["", "🔴 Admin commands:", "/approve [id] · /setqr_tng · /setqr_bank"]
-    : [];
-  await ctx.reply(
-    [
-      `Hi ${name}! 👋`,
-      "",
-      "Tap the buttons below or type a command.",
-      "Open 🌐 Open app for the full dashboard inside Telegram.",
-      "",
-      ...userCommands,
-      ...adminCommands,
-    ].join("\n"),
-    { reply_markup: { ...inline.reply_markup, ...reply.reply_markup } },
-  );
 }
 
 function createBot() {
@@ -399,6 +218,7 @@ function createBot() {
   }
   const bot = new Telegraf(config.botToken);
 
+  // ── Notification handler ──────────────────────────────────────
   setNotifier(async (order, source) => {
     const { getDb } = require("../db/database");
     const user = getDb()
@@ -407,110 +227,326 @@ function createBot() {
       )
       .get(order.id);
     if (!user?.telegram_id) return;
-    const token = findTokenForOrder(order);
-    const appUrl = webAppUrl(token);
-    const extra = appUrl
-      ? Markup.inlineKeyboard([
-          [Markup.button.webApp("🌐 View in app", appUrl)],
-        ])
-      : undefined;
     try {
       await bot.telegram.sendMessage(
         user.telegram_id,
         formatMailAlert(order, source),
-        {
-          parse_mode: undefined,
-          disable_web_page_preview: true,
-          ...(extra ? { reply_markup: extra.reply_markup } : {}),
-        },
+        { disable_web_page_preview: true },
       );
     } catch (err) {
-      console.error("Telegram notify failed:", err.message);
+      console.error("Notify failed:", err.message);
     }
   });
 
+  // ── Block check middleware ────────────────────────────────────
+  bot.use(async (ctx, next) => {
+    if (ctx.from && isUserBlocked(ctx.from.id)) {
+      try {
+        await ctx.reply(t(getUserLang(ctx.from.id), "blocked"));
+      } catch {}
+      return;
+    }
+    await next();
+  });
+
+  // ── Start ────────────────────────────────────────────────────
   bot.start(async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
-    await showMainMenu(ctx, user, ctx.from.first_name);
+    const lang = getUserLang(user.telegramId);
+    const name = ctx.from?.first_name || "there";
+    const appUrl = webAppUrl(user.accessToken);
+    const lines = [t(lang, "hi", name), ""];
+    if (!appUrl) lines.push("WEBAPP_URL not configured.");
+    const extra = appUrl
+      ? Markup.inlineKeyboard([
+          [Markup.button.webApp("🌐 Open Dashboard", appUrl)],
+        ])
+      : undefined;
+    await ctx.reply(lines.join("\n"), {
+      reply_markup: replyKeyboard(user.accessToken, user.telegramId)
+        .reply_markup,
+      ...(extra ? extra : {}),
+    });
   });
 
+  // ── Help ─────────────────────────────────────────────────────
   bot.command("help", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const isAdminUser =
-      user.telegramId &&
-      config.adminTelegramIds.includes(String(user.telegramId));
-    const userCommands = [
-      "🟢 User commands:",
-      "/balance — view gems & exchange rate",
-      "/topup — buy gems",
-      "/order [domain] — order email",
-      "/list — active orders",
-      "/mail <id> — refresh order",
-      "/domains — list services",
-      "/cancel <id> — cancel order",
-      "/web — open dashboard",
-    ];
-    const adminCommands = isAdminUser
-      ? [
-          "",
-          "🔴 Admin commands:",
-          "/approve [id] — approve payment",
-          "/setqr_tng — set TnG QR",
-          "/setqr_bank — set Bank QR",
-          "/webhook — show webhook URL",
-        ]
-      : [];
-    await ctx.reply(
-      ["Quick actions:", "", ...userCommands, ...adminCommands].join("\n"),
-      mainInlineKeyboard(user.accessToken),
-    );
+    await ctx.reply(t(getUserLang(ctx.from?.id), "help"));
+  });
+  bot.hears(/^(❓ Help|帮助)$/, async (ctx) => {
+    await ctx.reply(t(getUserLang(ctx.from?.id), "help"));
   });
 
-  bot.hears(
-    Object.values(BTN).filter((b) => typeof b === "string"),
-    async (ctx) => {
-      const user = getOrCreateTelegramUser(ctx.from.id);
-      const text = ctx.message.text;
-      if (text === BTN.BALANCE) {
-        await ctx.reply(
-          await formatBalanceMessage(user.id),
-          mainInlineKeyboard(user.accessToken),
-        );
-        return;
-      }
-      if (text === BTN.TOPUP) {
-        await showTopupMenu(ctx, user);
-        return;
-      }
-      if (text === BTN.LIST) {
-        await showOrderList(ctx, user);
-        return;
-      }
-      if (text === BTN.ORDER) {
-        await showOrderMenu(ctx, user);
-        return;
-      }
-      if (text === BTN.DOMAINS) {
-        await showDomains(ctx);
-      }
-    },
-  );
-
+  // ── Balance ──────────────────────────────────────────────────
+  bot.hears(/^(💎 Balance|💎 余额)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const lang = getUserLang(user.telegramId);
+    const text = await formatBalance(user.id, lang);
+    await ctx.reply(text, replyKeyboard(user.accessToken, user.telegramId));
+  });
   bot.command("balance", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.reply(
-      await formatBalanceMessage(user.id),
-      mainInlineKeyboard(user.accessToken),
-    );
-  });
-  bot.command("topup", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await showTopupMenu(ctx, user);
+    const text = await formatBalance(user.id, getUserLang(user.telegramId));
+    await ctx.reply(text);
   });
 
+  // ── Top up ───────────────────────────────────────────────────
+  bot.hears(/^(➕ Top up|➕ 充值)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const lang = getUserLang(user.telegramId);
+    const wallet = await getWalletInfo(user.id);
+    const text = t(
+      lang,
+      "topup",
+      wallet.exchange.gemsPerMyr.toLocaleString(),
+      wallet.methods,
+    );
+    await ctx.reply(text, replyKeyboard(user.accessToken, user.telegramId));
+  });
+
+  // ── Order ────────────────────────────────────────────────────
+  bot.hears(/^(🛒 Order|🛒 下单)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const lang = getUserLang(user.telegramId);
+    const appUrl = webAppUrl(user.accessToken);
+    const text = t(lang, "orderEmail") + "\n\n" + t(lang, "orderSms");
+    const extra = appUrl
+      ? Markup.inlineKeyboard([[Markup.button.webApp("🌐 Order Now", appUrl)]])
+      : undefined;
+    await ctx.reply(
+      text,
+      extra
+        ? {
+            ...extra,
+            reply_markup: replyKeyboard(user.accessToken, user.telegramId)
+              .reply_markup,
+          }
+        : replyKeyboard(user.accessToken, user.telegramId),
+    );
+  });
+
+  // ── Active mail ──────────────────────────────────────────────
+  bot.hears(/^(📬 Active mail|📬 活跃邮件)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const lang = getUserLang(user.telegramId);
+    const orders = listOrders(user.id, { limit: 20 });
+    await ctx.reply(
+      t(lang, "orders", orders),
+      replyKeyboard(user.accessToken, user.telegramId),
+    );
+  });
+  bot.command("list", async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const orders = listOrders(user.id, { limit: 20 });
+    await ctx.reply(t(getUserLang(user.telegramId), "orders", orders));
+  });
+
+  // ── Domains ──────────────────────────────────────────────────
+  bot.hears(/^(📋 Domains|📋 域名)$/, async (ctx) => {
+    const lang = getUserLang(ctx.from?.id);
+    try {
+      const domains = await getDomains();
+      const list = Array.isArray(domains) ? domains : [];
+      await ctx.reply(
+        t(lang, "domains", list),
+        replyKeyboard(
+          getOrCreateTelegramUser(ctx.from.id).accessToken,
+          ctx.from.id,
+        ),
+      );
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
+  });
+  bot.command("domains", async (ctx) => {
+    try {
+      const domains = await getDomains();
+      const list = Array.isArray(domains) ? domains : [];
+      await ctx.reply(t(getUserLang(ctx.from?.id), "domains", list));
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
+  });
+
+  // ── Web app ──────────────────────────────────────────────────
+  bot.hears(/^(🌐 Open App|🌐 打开应用)$/, async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const appUrl = webAppUrl(user.accessToken);
+    if (appUrl) {
+      await ctx.reply(
+        "Open your dashboard:",
+        Markup.inlineKeyboard([
+          [Markup.button.webApp("🌐 SMS Mail Receiver", appUrl)],
+        ]),
+      );
+    } else {
+      await ctx.reply("WEBAPP_URL not configured.");
+    }
+  });
+  bot.command("web", async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const appUrl = webAppUrl(user.accessToken);
+    if (appUrl) {
+      await ctx.reply(
+        "Open:",
+        Markup.inlineKeyboard([[Markup.button.webApp("🌐 Dashboard", appUrl)]]),
+      );
+    } else {
+      await ctx.reply("WEBAPP_URL not set.");
+    }
+  });
+
+  // ── Language switch ──────────────────────────────────────────
+  bot.command("lang", async (ctx) => {
+    const lang = ctx.message.text.replace(/^\/lang\s*/i, "").trim();
+    if (lang === "zh" || lang === "zh-CN" || lang === "cn") {
+      userLangs[ctx.from.id] = "zh-CN";
+      saveUserPreference(ctx.from.id, "language", "zh-CN");
+      await ctx.reply("语言已切换为中文 ✅ / Language switched to Chinese ✅");
+    } else {
+      userLangs[ctx.from.id] = "en";
+      saveUserPreference(ctx.from.id, "language", "en");
+      await ctx.reply("Language switched to English ✅");
+    }
+  });
+
+  // ── Admin: forward user messages ─────────────────────────────
+  bot.on("message", async (ctx, next) => {
+    if (!ctx.from || isAdmin(ctx.from.id)) {
+      await next();
+      return;
+    }
+    if (
+      ctx.message?.text &&
+      !ctx.message.text.startsWith("/") &&
+      !ctx.message.text.match(/^(💎|➕|📬|🛒|📋|🌐|帮助)/)
+    ) {
+      await forwardToAdmins(bot, ctx);
+    }
+    await next();
+  });
+
+  // ── Admin: reply / block / unblock ───────────────────────────
+  bot.action(/^admin_reply_(\d+)_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.answerCbQuery("Admin only");
+      return;
+    }
+    const userId = parseInt(ctx.match[1], 10);
+    const code = ctx.match[2];
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      `Redirect message to user ${userId}: /reply ${userId} #${code} <your message>`,
+    );
+  });
+
+  bot.action(/^admin_block_(\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.answerCbQuery("Admin only");
+      return;
+    }
+    const userId = parseInt(ctx.match[1], 10);
+    blockUser(userId, "Admin block", ctx.from.id);
+    await ctx.answerCbQuery("User blocked ✅");
+    try {
+      await ctx.editMessageReplyMarkup(undefined);
+    } catch {}
+  });
+
+  bot.action(/^admin_unblock_(\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.answerCbQuery("Admin only");
+      return;
+    }
+    const userId = parseInt(ctx.match[1], 10);
+    unblockUser(userId);
+    await ctx.answerCbQuery("User unblocked ✅");
+    try {
+      await ctx.editMessageReplyMarkup(undefined);
+    } catch {}
+  });
+
+  bot.command("block", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
+    const id = parseInt(
+      ctx.message.text.replace(/^\/block\s*/i, "").trim(),
+      10,
+    );
+    if (!id) {
+      await ctx.reply("Usage: /block <user_id>");
+      return;
+    }
+    blockUser(id, "Admin command", ctx.from.id);
+    await ctx.reply(`User ${id} blocked ✅`);
+  });
+
+  bot.command("unblock", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
+    const id = parseInt(
+      ctx.message.text.replace(/^\/unblock\s*/i, "").trim(),
+      10,
+    );
+    if (!id) {
+      await ctx.reply("Usage: /unblock <user_id>");
+      return;
+    }
+    unblockUser(id);
+    await ctx.reply(`User ${id} unblocked ✅`);
+  });
+
+  bot.command("blocked", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
+    const list = listBlockedUsers();
+    if (!list.length) {
+      await ctx.reply("No blocked users.");
+      return;
+    }
+    await ctx.reply(
+      list
+        .map(
+          (b) =>
+            `❌ ID: ${b.user_id} | ${b.reason || "no reason"} | ${b.blocked_at}`,
+        )
+        .join("\n"),
+    );
+  });
+
+  bot.command("reply", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
+    const args = ctx.message.text
+      .replace(/^\/reply\s*/i, "")
+      .trim()
+      .split(/\s+/);
+    const userId = parseInt(args[0], 10);
+    const msgText = args.slice(1).join(" ");
+    if (!userId || !msgText) {
+      await ctx.reply("Usage: /reply <user_id> <message>");
+      return;
+    }
+    try {
+      await bot.telegram.sendMessage(userId, `📩 Admin reply: ${msgText}`);
+      await ctx.reply("Reply sent ✅");
+    } catch (err) {
+      await ctx.reply(`Failed: ${err.message}`);
+    }
+  });
+
+  // ── Approve ──────────────────────────────────────────────────
   bot.command("approve", async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
-      await ctx.reply("Admin only.");
+      await ctx.reply("Admin only");
       return;
     }
     const id = parseInt(ctx.message.text.replace(/^\/approve\s*/i, ""), 10);
@@ -520,12 +556,16 @@ function createBot() {
         await ctx.reply("No pending manual payments.");
         return;
       }
-      const lines = pending.map(
-        (p) =>
-          `#${p.id} user ${p.telegramId || p.userId} RM${p.amountMyr} → ${formatGems(p.gems)} gems (${p.provider})`,
-      );
       await ctx.reply(
-        ["Pending payments:", ...lines, "", "Use /approve <id>"].join("\n"),
+        [
+          "Pending:",
+          ...pending.map(
+            (p) =>
+              `#${p.id} RM${p.amountMyr} → ${formatGems(p.gems)} (${p.provider})`,
+          ),
+          "",
+          "Use /approve <id>",
+        ].join("\n"),
       );
       return;
     }
@@ -540,57 +580,53 @@ function createBot() {
   });
 
   bot.command("webhook", async (ctx) => {
-    await ctx.reply(
-      [
-        "Configure this URL in Hero-SMS webhook:",
-        webhookUrl(),
-        "",
-        config.webhookSecret
-          ? "Secret is enabled."
-          : "Optional: set WEBHOOK_SECRET in env.",
-      ].join("\n"),
-    );
-  });
-  bot.command("web", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const appUrl = webAppUrl(user.accessToken);
-    const extra = appUrl
-      ? Markup.inlineKeyboard([
-          [Markup.button.webApp("🌐 Open dashboard", appUrl)],
-        ])
-      : mainInlineKeyboard(user.accessToken);
-    await ctx.reply("Open your dashboard:", extra);
-  });
-  bot.command("domains", async (ctx) => {
-    await showDomains(ctx);
-  });
-  bot.command("list", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await showOrderList(ctx, user);
+    const url = config.webappUrl
+      ? `${config.webappUrl}/webhook/hero-sms`
+      : "Not configured";
+    await ctx.reply(`Webhook URL: ${url}`);
   });
 
-  bot.command("mail", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const id = parseInt(ctx.message.text.replace(/^\/mail\s*/i, ""), 10);
-    if (!id) {
-      await ctx.reply("Usage: /mail 1");
-      return;
-    }
-    const order = getOrderById(id, user.id);
-    if (!order) {
-      await ctx.reply("Order not found.");
-      return;
-    }
+  bot.command("countries", async (ctx) => {
     try {
-      const remote = await getEmail(order.heroId);
-      const updated = saveOrder(user.id, remote);
+      const countries = await getSmsCountries();
+      if (!Array.isArray(countries) || !countries.length) {
+        await ctx.reply("No countries returned from API.");
+        return;
+      }
+      const list = countries
+        .slice(0, 20)
+        .map((c) => `• ${c.eng || c.rus || c.id} (ID: ${c.id})`)
+        .join("\n");
       await ctx.reply(
-        formatOrder(updated),
-        mainInlineKeyboard(user.accessToken),
+        `Available SMS countries:\n${list}\n\nUse /setcountry <id> to set your default.`,
       );
-    } catch {
-      await ctx.reply(formatOrder(order), mainInlineKeyboard(user.accessToken));
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
     }
+  });
+
+  bot.command("setcountry", async (ctx) => {
+    const id = ctx.message.text.replace(/^\/setcountry\s*/i, "").trim();
+    if (!id) {
+      await ctx.reply("Usage: /setcountry <country_id>");
+      return;
+    }
+    config.smsActivateCountryId = id;
+    saveUserPreference(ctx.from.id, "preferred_country", id);
+    await ctx.reply(`Default SMS country set to ${id} ✅`);
+  });
+
+  bot.command("topup", async (ctx) => {
+    const user = getOrCreateTelegramUser(ctx.from.id);
+    const wallet = await getWalletInfo(user.id);
+    await ctx.reply(
+      t(
+        getUserLang(user.telegramId),
+        "topup",
+        wallet.exchange.gemsPerMyr.toLocaleString(),
+        wallet.methods,
+      ),
+    );
   });
 
   bot.command("order", async (ctx) => {
@@ -606,24 +642,14 @@ function createBot() {
       const { site, domain } = await resolveOrderDomain(rawDomain, rawSite);
       const { costGems } = await estimateOrderCost(domain);
       await ctx.reply(
-        `Ordering ${site} @ ${domain} (${costGems.toLocaleString()} gems)…`,
+        `Ordering ${site} @ ${domain} (${costGems.toLocaleString()} gems)...`,
       );
       const { order: saved } = await placeOrder(user.id, site, domain);
-      await ctx.reply(
-        [
-          "Order placed ✅",
-          "",
-          formatOrder(saved),
-          "",
-          "Watching for incoming mail…",
-        ].join("\n"),
-        mainInlineKeyboard(user.accessToken),
-      );
+      await ctx.reply(t(getUserLang(user.telegramId), "orderPlaced", saved));
     } catch (err) {
       if (err.code === "INSUFFICIENT_GEMS") {
         await ctx.reply(
-          `Not enough gems. Need ${err.requiredGems.toLocaleString()}, have ${err.balance.toLocaleString()}.\nTap ➕ Top up.`,
-          mainInlineKeyboard(user.accessToken),
+          `Not enough gems. Need ${err.requiredGems.toLocaleString()}, have ${err.balance.toLocaleString()}.`,
         );
         return;
       }
@@ -645,634 +671,16 @@ function createBot() {
     }
     try {
       await cancelOrderWithRefund(user.id, order);
-      await ctx.reply(
-        `Cancelled order #${id}`,
-        mainInlineKeyboard(user.accessToken),
-      );
+      await ctx.reply(`Cancelled order #${id}`);
     } catch (err) {
       await ctx.reply(`Cancel failed: ${err.message}`);
     }
   });
 
-  // ── Inline button actions ───────────────────────────────────
-  bot.action("main_menu", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    await editMainMenu(ctx, user);
-  });
-
-  async function editMainMenu(ctx, user) {
-    const name = ctx?.from?.first_name || "there";
-    const isAdminUser =
-      user.telegramId &&
-      config.adminTelegramIds.includes(String(user.telegramId));
-    const userCmds =
-      "🟢 User: /balance · /topup · /order [domain] · /list · /mail · /cancel · /web · /smslist";
-    const adminCmds = isAdminUser
-      ? "\n🔴 Admin: /approve · /setqr_tng · /setqr_bank"
-      : "";
-    const text = `Hi ${name}! 👋\n\n${userCmds}${adminCmds}`;
-    await ctx
-      .editMessageText(text, mainInlineKeyboard(user.accessToken))
-      .catch(() => ctx.reply(text, mainInlineKeyboard(user.accessToken)));
-  }
-
-  bot.action("help_menu", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    const text = [
-      "💎 Balance — gems & exchange rate",
-      "➕ Top up — buy gems",
-      "🛒 Order mail — disposable email for activations",
-      "📬 Active mail — your orders + refresh/cancel",
-      "📋 Domains — prices & one-tap order",
-      "🌐 Open app — full web dashboard",
-    ].join("\n");
-    await ctx
-      .editMessageText(text, mainInlineKeyboard(user.accessToken))
-      .catch(() => ctx.reply(text, mainInlineKeyboard(user.accessToken)));
-  });
-
-  bot.action("balance", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    const isAdminUser =
-      user.telegramId &&
-      config.adminTelegramIds.includes(String(user.telegramId));
-    const text = await formatBalanceMessage(user.id, isAdminUser);
-    await ctx
-      .editMessageText(text, mainInlineKeyboard(user.accessToken))
-      .catch(() => ctx.reply(text, mainInlineKeyboard(user.accessToken)));
-  });
-
-  bot.action("topup_menu", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    await editTopupMenu(ctx, user);
-  });
-
-  async function editTopupMenu(ctx, user) {
-    const wallet = await getWalletInfo(user.id);
-    const buttons = wallet.packages.map((pkg) => [
-      Markup.button.callback(
-        `${pkg.name} — RM${pkg.priceMyr}`,
-        `topup_pkg_${pkg.id}`,
-      ),
-    ]);
-    buttons.push([Markup.button.callback("Custom amount (web)", "topup_web")]);
-    buttons.push([Markup.button.callback("« Menu", "main_menu")]);
-    const text = [
-      "Choose a gem package:",
-      `Current rate: 1 MYR = ${wallet.exchange.gemsPerMyr.toLocaleString()} gems`,
-      "",
-      wallet.methods.map((m) => `• ${m.name}`).join("\n") ||
-        "Configure payment env vars on server.",
-    ].join("\n");
-    await ctx
-      .editMessageText(text, Markup.inlineKeyboard(buttons))
-      .catch(() => ctx.reply(text, Markup.inlineKeyboard(buttons)));
-  }
-
-  bot.action(/^topup_pkg_(\d+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const packageId = parseInt(ctx.match[1], 10);
-    await ctx.answerCbQuery();
-    const methods = [];
-    if (config.telegramPaymentProviderToken)
-      methods.push([
-        Markup.button.callback("⭐ Telegram Stars", `pay_stars_${packageId}`),
-      ]);
-    if (config.billplzApiKey)
-      methods.push([
-        Markup.button.callback(
-          "💳 FPX / Card / TnG",
-          `pay_billplz_${packageId}`,
-        ),
-      ]);
-    if (config.manualTngPhone)
-      methods.push([
-        Markup.button.callback("📱 TnG manual", `pay_tng_${packageId}`),
-      ]);
-    if (config.manualBankAccount)
-      methods.push([
-        Markup.button.callback("🏦 Bank transfer", `pay_bank_${packageId}`),
-      ]);
-    const text = methods.length
-      ? "Select payment method:"
-      : "No payment methods configured on server.";
-    const kb = methods.length
-      ? Markup.inlineKeyboard(methods)
-      : mainInlineKeyboard(user.accessToken);
-    await ctx.editMessageText(text, kb).catch(() => ctx.reply(text, kb));
-  });
-
-  bot.action(/^pay_billplz_(\d+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const packageId = parseInt(ctx.match[1], 10);
-    await ctx.answerCbQuery();
-    try {
-      const result = await createTopup(user.id, {
-        method: "billplz",
-        packageId,
-      });
-      await ctx
-        .editMessageText(`Pay here:\n${result.billUrl}`)
-        .catch(() => ctx.reply(`Pay here:\n${result.billUrl}`));
-    } catch (err) {
-      await ctx.reply(`Payment error: ${err.message}`);
-    }
-  });
-
-  function getQrFileId(type) {
-    try {
-      const { getDb } = require("../db/database");
-      const row = getDb()
-        .prepare("SELECT value FROM app_config WHERE key = ?")
-        .get(type === "manual_tng" ? "qr_tng_file_id" : "qr_bank_file_id");
-      return row?.value || null;
-    } catch {
-      return null;
-    }
-  }
-
-  async function sendManualPayment(ctx, result, title) {
-    const fileId = getQrFileId(result.provider);
-    const lines = [
-      `${title} — Manual Payment`,
-      "",
-      ...result.instructions,
-      "",
-      `Payment ID: #${result.paymentId}`,
-    ];
-    const caption = lines.join("\n");
-    const confirmButtons = Markup.inlineKeyboard([
-      [
-        Markup.button.callback(
-          "✅ I've paid, notify admin",
-          `confirm_paid_${result.paymentId}`,
-        ),
-      ],
-      [
-        Markup.button.callback(
-          "❌ Cancel payment",
-          `cancel_payment_${result.paymentId}`,
-        ),
-      ],
-    ]);
-    if (fileId) {
-      try {
-        await ctx.replyWithPhoto(fileId, { caption, ...confirmButtons });
-        return;
-      } catch {}
-    }
-    await ctx.reply(caption, confirmButtons);
-  }
-
-  bot.action(/^pay_tng_(\d+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    try {
-      const result = await createTopup(user.id, {
-        method: "manual_tng",
-        packageId: parseInt(ctx.match[1], 10),
-      });
-      await sendManualPayment(ctx, result, "📱 Touch n Go eWallet");
-    } catch (err) {
-      await ctx.reply(`Payment error: ${err.message}`);
-    }
-  });
-  bot.action(/^pay_bank_(\d+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    try {
-      const result = await createTopup(user.id, {
-        method: "manual_bank",
-        packageId: parseInt(ctx.match[1], 10),
-      });
-      await sendManualPayment(ctx, result, "🏦 Bank Transfer");
-    } catch (err) {
-      await ctx.reply(`Payment error: ${err.message}`);
-    }
-  });
-
-  bot.action(/^confirm_paid_(\d+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const paymentId = parseInt(ctx.match[1], 10);
-    await ctx.answerCbQuery();
-    const payment = require("../services/payments/store").getPaymentById(
-      paymentId,
-    );
-    if (!payment || payment.userId !== user.id) {
-      await ctx.reply("Payment not found or not yours.");
-      return;
-    }
-    if (payment.status !== "pending") {
-      await ctx.reply("This payment has already been processed.");
-      return;
-    }
-    const meta = {
-      ...(payment.meta || {}),
-      userConfirmedAt: new Date().toISOString(),
-      userTelegramId: ctx.from.id,
-      userUsername: ctx.from.username || null,
-    };
-    require("../services/payments/store").updatePayment(paymentId, { meta });
-    const adminIds = config.adminTelegramIds;
-    const msg = [
-      "📢 User confirmed manual payment!",
-      "",
-      `Payment #${paymentId}`,
-      `User: ${ctx.from.first_name} (@${ctx.from.username || "N/A"})`,
-      `Amount: RM ${payment.amountMyr} → ${payment.gems.toLocaleString()} gems`,
-      `Method: ${payment.provider === "manual_tng" ? "TnG eWallet" : "Bank Transfer"}`,
-      "",
-      "Approve via /approve or web admin panel.",
-    ].join("\n");
-    for (const adminId of adminIds) {
-      try {
-        await bot.telegram.sendMessage(adminId, msg);
-      } catch {}
-    }
-    await ctx.reply(
-      [
-        "✅ Your payment confirmation has been sent to the admin.",
-        "",
-        "Once verified, gems will be credited to your account.",
-      ].join("\n"),
-    );
-  });
-
-  bot.action(/^cancel_payment_(\d+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const paymentId = parseInt(ctx.match[1], 10);
-    await ctx.answerCbQuery();
-    const payment = require("../services/payments/store").getPaymentById(
-      paymentId,
-    );
-    if (!payment || payment.userId !== user.id) {
-      await ctx.reply("Payment not found or not yours.");
-      return;
-    }
-    if (payment.status !== "pending") {
-      await ctx.reply("This payment has already been processed.");
-      return;
-    }
-    require("../services/payments/store").updatePayment(paymentId, {
-      status: "cancelled",
-    });
-    await ctx
-      .editMessageText(
-        "❌ Payment cancelled.",
-        mainInlineKeyboard(user.accessToken),
-      )
-      .catch(() =>
-        ctx.reply(
-          "❌ Payment cancelled.",
-          mainInlineKeyboard(user.accessToken),
-        ),
-      );
-  });
-
-  bot.action(/^pay_stars_(\d+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const packageId = parseInt(ctx.match[1], 10);
-    await ctx.answerCbQuery();
-    try {
-      const wallet = await getWalletInfo(user.id);
-      const pkg = wallet.packages.find((p) => p.id === packageId);
-      if (!pkg) throw new Error("Package not found");
-      const stars = Math.max(1, Math.ceil(pkg.priceMyr / config.myrPerStar));
-      await ctx.replyWithInvoice(
-        buildStarsPayload({
-          title: pkg.name,
-          description: `${pkg.gems.toLocaleString()} gems`,
-          starCount: stars,
-          payload: JSON.stringify({
-            userId: user.id,
-            packageId,
-            gems: pkg.gems,
-          }),
-        }),
-      );
-    } catch (err) {
-      await ctx.reply(`Stars payment error: ${err.message}`);
-    }
-  });
-
-  bot.action("topup_web", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    const appUrl = webAppUrl(user.accessToken);
-    const text = appUrl
-      ? "Top up on the dashboard:"
-      : `Top up: ${webLink(user.accessToken)}#topup`;
-    const kb = appUrl
-      ? Markup.inlineKeyboard([
-          [Markup.button.webApp("🌐 Open top-up", `${appUrl}#topup`)],
-        ])
-      : mainInlineKeyboard(user.accessToken);
-    await ctx.editMessageText(text, kb).catch(() => ctx.reply(text, kb));
-  });
-
-  bot.action("list", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    const orders = listOrders(user.id, { limit: 20 });
-    const text = formatOrderList(orders);
-    const extra = orders.length
-      ? orderListKeyboard(orders)
-      : mainInlineKeyboard(user.accessToken);
-    await ctx.editMessageText(text, extra).catch(() => ctx.reply(text, extra));
-  });
-  bot.action("order_menu", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    await showOrderMenu(ctx, user);
-  });
-  bot.action("domains", async (ctx) => {
-    await ctx.answerCbQuery();
-    await showDomains(ctx, 0);
-  });
-  bot.action(/^domains_page_(\d+)$/, async (ctx) => {
-    await ctx.answerCbQuery();
-    await showDomains(ctx, parseInt(ctx.match[1], 10));
-  });
-  bot.action(/^sms_services_page_(\d+)$/, async (ctx) => {
-    await ctx.answerCbQuery();
-    await showSmsServices(ctx, parseInt(ctx.match[1], 10));
-  });
-  bot.action("sms_services", async (ctx) => {
-    await ctx.answerCbQuery();
-    await showSmsServices(ctx, 0);
-  });
-
-  // ── Country picker actions ─────────────────────────────────────
-  bot.action("sms_countries", async (ctx) => {
-    await ctx.answerCbQuery();
-    await showSmsCountries(ctx, 0);
-  });
-  bot.action(/^sms_countries_page_(\d+)$/, async (ctx) => {
-    await ctx.answerCbQuery();
-    await showSmsCountries(ctx, parseInt(ctx.match[1], 10));
-  });
-
-  bot.action(/^sms_country_(.+)$/, async (ctx) => {
-    const rawId = ctx.match[1];
-    const countryId = parseInt(rawId, 10);
-    await ctx.answerCbQuery();
-    config.smsActivateCountryId = !isNaN(countryId) ? countryId : rawId;
-    config.smsActivateCountryName =
-      ctx.callbackQuery?.message?.reply_markup?.inline_keyboard
-        ?.flat()
-        .find((b) => b.callback_data === `sms_country_${rawId}`)?.text ||
-      String(countryId);
-    await showSmsServices(ctx, 0);
-  });
-
-  bot.command("smslist", async (ctx) => {
-    try {
-      const activations =
-        await require("../services/smsActivate").getActiveActivations();
-      if (!Array.isArray(activations) || activations.length === 0) {
-        await ctx.reply("No active SMS activations.");
-        return;
-      }
-      const lines = ["📱 Active SMS activations:", ""];
-      activations.forEach((a) =>
-        lines.push(
-          `#${a.activationId} | ${a.service || "?"} | ${a.phoneNumber || "pending"} | ${a.status || "active"}`,
-        ),
-      );
-      lines.push("", "Use /smsstatus <id> to check SMS code");
-      await ctx.reply(lines.join("\n"));
-    } catch (err) {
-      await ctx.reply(`Error: ${err.message}`);
-    }
-  });
-
-  bot.command("countries", async (ctx) => {
-    await showSmsCountries(ctx);
-  });
-
-  bot.action(/^sms_order_([a-z_0-9]+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const serviceCode = ctx.match[1];
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(
-      `Ordering ${getServiceName(serviceCode)} SMS number...`,
-    );
-    try {
-      const activation = await getSmsNumber(
-        serviceCode,
-        config.smsActivateCountryId,
-      );
-      const {
-        fetchUsdMyrRate,
-        gemsPerMyr,
-      } = require("../services/exchangeRate");
-      const usdMyr = await fetchUsdMyrRate();
-      const gpm = gemsPerMyr(usdMyr);
-      const costGems = Math.max(
-        Math.round(
-          activation.cost * gpm * (1 + config.orderMarkupPercent / 100),
-        ),
-        config.minOrderGems,
-      );
-      const balance = getUserBalance(user.id);
-      if (balance < costGems) {
-        await ctx.editMessageText(
-          `Not enough gems. Need ${costGems.toLocaleString()}, have ${balance.toLocaleString()}.`,
-          mainInlineKeyboard(user.accessToken),
-        );
-        require("../services/smsActivate")
-          .setStatus(activation.activationId, "8")
-          .catch(() => {});
-        return;
-      }
-      debitGems(
-        user.id,
-        costGems,
-        "sms_activation",
-        activation.activationId,
-        `${serviceCode} SMS activation`,
-      );
-      await ctx.editMessageText(
-        [
-          `✅ ${getServiceName(serviceCode)} SMS Activated!`,
-          `📱 ${activation.phoneNumber}`,
-          `💎 ${costGems.toLocaleString()} gems`,
-          `⏳ Expires: ${activation.activationEndTime ? new Date(activation.activationEndTime).toLocaleString() : "20 min"}`,
-          `🆔 ${activation.activationId}`,
-          "",
-          "Use /smsstatus <id> to check SMS code.",
-        ].join("\n"),
-        Markup.inlineKeyboard([
-          [
-            Markup.button.callback(
-              "🔄 Check SMS",
-              `sms_check_${activation.activationId}`,
-            ),
-          ],
-          [Markup.button.callback("« Menu", "main_menu")],
-        ]),
-      );
-    } catch (err) {
-      await ctx.editMessageText(
-        `Order failed: ${err.message}`,
-        mainInlineKeyboard(user.accessToken),
-      );
-    }
-  });
-
-  bot.action(/^sms_check_(\d+)$/, async (ctx) => {
-    const activationId = parseInt(ctx.match[1], 10);
-    await ctx.answerCbQuery();
-    try {
-      const status = await require("../services/smsActivate").getStatus(
-        activationId,
-      );
-      if (status.status === "OK") {
-        await ctx.editMessageText(
-          `✅ SMS Code: ${status.smsCode}`,
-          mainInlineKeyboard(getOrCreateTelegramUser(ctx.from.id).accessToken),
-        );
-      } else {
-        await ctx.answerCbQuery(`Status: ${status.status} — try again`);
-      }
-    } catch (err) {
-      await ctx.answerCbQuery(`Error: ${err.message}`);
-    }
-  });
-
-  bot.command("smsstatus", async (ctx) => {
-    const id = ctx.message.text.replace(/^\/smsstatus\s*/i, "").trim();
-    if (!id) {
-      await ctx.reply("Usage: /smsstatus <activationId>");
-      return;
-    }
-    try {
-      const status = await require("../services/smsActivate").getStatus(id);
-      await ctx.reply(
-        status.status === "OK"
-          ? `✅ Code: ${status.smsCode}`
-          : `⏳ Status: ${status.status}`,
-      );
-    } catch (err) {
-      await ctx.reply(`Error: ${err.message}`);
-    }
-  });
-
-  bot.action(/^order_domain_(.+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const domainName = decodeURIComponent(ctx.match[1]);
-    await ctx.answerCbQuery();
-    try {
-      const { site, domain } = await resolveOrderDomain(domainName);
-      const { costGems } = await estimateOrderCost(domain);
-      await ctx.editMessageText(
-        `Ordering ${site} @ ${domain} (${costGems.toLocaleString()} gems)…`,
-      );
-      const { order: saved } = await placeOrder(user.id, site, domain);
-      await ctx.editMessageText(
-        [
-          "Order placed ✅",
-          "",
-          formatOrder(saved),
-          "",
-          "Watching for incoming mail…",
-        ].join("\n"),
-        mainInlineKeyboard(user.accessToken),
-      );
-    } catch (err) {
-      if (err.code === "INSUFFICIENT_GEMS") {
-        await ctx.editMessageText(
-          "Not enough gems. Tap ➕ Top up.",
-          mainInlineKeyboard(user.accessToken),
-        );
-        return;
-      }
-      await ctx.editMessageText(`Order failed: ${err.message}`);
-    }
-  });
-
-  bot.action("order_default", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    await ctx.answerCbQuery();
-    try {
-      const { site, domain } = await resolveOrderDomain(
-        config.defaultDomain,
-        config.defaultSite,
-      );
-      const { order: saved } = await placeOrder(user.id, site, domain);
-      await ctx.editMessageText(
-        [
-          "Order placed ✅",
-          "",
-          formatOrder(saved),
-          "",
-          "Watching for incoming mail…",
-        ].join("\n"),
-        mainInlineKeyboard(user.accessToken),
-      );
-    } catch (err) {
-      if (err.code === "INSUFFICIENT_GEMS") {
-        await ctx.editMessageText(
-          "Not enough gems. Tap ➕ Top up.",
-          mainInlineKeyboard(user.accessToken),
-        );
-        return;
-      }
-      await ctx.editMessageText(`Order failed: ${err.message}`);
-    }
-  });
-
-  bot.action(/^mail_(\d+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const id = parseInt(ctx.match[1], 10);
-    await ctx.answerCbQuery();
-    const order = getOrderById(id, user.id);
-    if (!order) {
-      await ctx.editMessageText("Order not found.");
-      return;
-    }
-    try {
-      const remote = await getEmail(order.heroId);
-      const updated = saveOrder(user.id, remote);
-      await ctx.editMessageText(
-        formatOrder(updated),
-        orderListKeyboard(listOrders(user.id, { limit: 20 })),
-      );
-    } catch {
-      await ctx.editMessageText(
-        formatOrder(order),
-        orderListKeyboard(listOrders(user.id, { limit: 20 })),
-      );
-    }
-  });
-
-  bot.action(/^cancel_(\d+)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
-    const id = parseInt(ctx.match[1], 10);
-    await ctx.answerCbQuery();
-    const order = getOrderById(id, user.id);
-    if (!order) {
-      await ctx.editMessageText("Order not found.");
-      return;
-    }
-    try {
-      await cancelOrderWithRefund(user.id, order);
-      await ctx.editMessageText(
-        `Cancelled order #${id}`,
-        orderListKeyboard(listOrders(user.id, { limit: 20 })),
-      );
-    } catch (err) {
-      await ctx.editMessageText(`Cancel failed: ${err.message}`);
-    }
-  });
-
+  // ── QR uploads (admin) ───────────────────────────────────────
   bot.command("setqr_tng", async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
-      await ctx.reply("Admin only.");
+      await ctx.reply("Admin only");
       return;
     }
     if (!ctx.message.reply_to_message?.photo) {
@@ -1288,7 +696,7 @@ function createBot() {
   });
   bot.command("setqr_bank", async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
-      await ctx.reply("Admin only.");
+      await ctx.reply("Admin only");
       return;
     }
     if (!ctx.message.reply_to_message?.photo) {
@@ -1303,6 +711,7 @@ function createBot() {
     await ctx.reply("✅ Bank QR saved!");
   });
 
+  // ── Payments ─────────────────────────────────────────────────
   bot.on("pre_checkout_query", async (ctx) => {
     await ctx.answerPreCheckoutQuery(true);
   });
@@ -1315,7 +724,6 @@ function createBot() {
       );
       await ctx.reply(
         `Payment received ✅\n+${formatGems(result.payment.gems)} gems\nBalance: ${formatGems(getUserBalance(user.id))} gems`,
-        mainInlineKeyboard(user.accessToken),
       );
     } catch (err) {
       await ctx.reply(
@@ -1339,10 +747,7 @@ async function launchBot(bot, app) {
         text: "Open dashboard",
         web_app: { url: config.webappUrl },
       });
-      console.log("Telegram menu button set to web app");
-    } catch (err) {
-      console.warn("Could not set menu button:", err.message);
-    }
+    } catch {}
   }
   if (config.webappUrl && config.isProduction) {
     const webhookPath = "/telegram-webhook";
@@ -1356,4 +761,11 @@ async function launchBot(bot, app) {
   }
 }
 
-module.exports = { createBot, launchBot, webhookUrl };
+module.exports = {
+  createBot,
+  launchBot,
+  webhookUrl: () =>
+    config.webappUrl
+      ? `${config.webappUrl}/webhook/hero-sms`
+      : "Not configured",
+};
