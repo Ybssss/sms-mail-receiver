@@ -10,6 +10,7 @@ let tgWebApp = null;
 const orderForm = document.getElementById("order-form");
 const serviceSelect = document.getElementById("service-select");
 const smsServiceSelect = document.getElementById("sms-service-select");
+const smsCountrySelect = document.getElementById("sms-country-select");
 const smsSearchInput = document.getElementById("sms-service-search");
 const smsOrderForm = document.getElementById("sms-order-form");
 const smsResult = document.getElementById("sms-result");
@@ -304,6 +305,11 @@ async function loadServices() {
       "Could not load services. Check Hero-SMS API key.";
   }
 
+  // Load SMS countries
+  try {
+    const cData = await fetch("/api/sms-countries").then((r) => r.json());
+    renderSmsCountries(cData.countries);
+  } catch {}
   // Load SMS activation services
   try {
     const smsData = await api("/api/sms-services");
@@ -314,6 +320,42 @@ async function loadServices() {
       smsError.classList.remove("hidden");
     }
   }
+}
+
+function renderSmsCountries(countries) {
+  if (!smsCountrySelect) return;
+  smsCountrySelect.innerHTML = '<option value="">All countries</option>';
+  if (!Array.isArray(countries) || !countries.length) return;
+  countries.forEach((c) => {
+    const opt = document.createElement("option");
+    opt.value = c.id;
+    opt.textContent = c.eng || c.rus || `Country ${c.id}`;
+    smsCountrySelect.appendChild(opt);
+  });
+  // Set current country if known from API response
+  if (smsCountrySelect.dataset.current) {
+    smsCountrySelect.value = smsCountrySelect.dataset.current;
+  }
+}
+
+if (smsCountrySelect) {
+  smsCountrySelect.addEventListener("change", async () => {
+    const countryId = smsCountrySelect.value;
+    try {
+      const url = countryId
+        ? `/api/sms-services?country=${countryId}`
+        : "/api/sms-services";
+      const data = await api(url);
+      if (data.currentCountryId)
+        smsCountrySelect.dataset.current = String(data.currentCountryId);
+      renderSmsServices(data.services);
+    } catch (err) {
+      if (smsError) {
+        smsError.textContent = err.message;
+        smsError.classList.remove("hidden");
+      }
+    }
+  });
 }
 
 function renderSmsServices(services) {
