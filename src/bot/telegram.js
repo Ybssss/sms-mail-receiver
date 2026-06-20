@@ -1173,6 +1173,55 @@ function createBot() {
     await showSmsServices(ctx, 0);
   });
 
+  // ── Country picker actions ─────────────────────────────────────
+  bot.action("sms_countries", async (ctx) => {
+    await ctx.answerCbQuery();
+    await showSmsCountries(ctx, 0);
+  });
+
+  bot.action(/^sms_countries_page_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const page = parseInt(ctx.match[1], 10);
+    await showSmsCountries(ctx, page);
+  });
+
+  bot.action(/^sms_country_(\w+)$/, async (ctx) => {
+    const countryId = ctx.match[1];
+    await ctx.answerCbQuery();
+    // Update the used country
+    config.smsActivateCountry = countryId;
+    config.smsActivateCountryId = countryId;
+    // Go back to SMS services list with new country
+    await showSmsServices(ctx, 0);
+  });
+
+  // ── SMS list command ───────────────────────────────────────────
+  bot.command("smslist", async (ctx) => {
+    try {
+      const activations =
+        await require("../services/smsActivate").getActiveActivations();
+      if (!Array.isArray(activations) || activations.length === 0) {
+        await ctx.reply("No active SMS activations.");
+        return;
+      }
+      const lines = ["📱 Active SMS activations:", ""];
+      activations.forEach((a) => {
+        lines.push(
+          `#${a.activationId} | ${a.service || "?"} | ${a.phoneNumber || "pending"} | ${a.status || "active"}`,
+        );
+      });
+      lines.push("", "Use /smsstatus <id> to check SMS code");
+      await ctx.reply(lines.join("\n"));
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
+  });
+
+  // ── Countries command ──────────────────────────────────────────
+  bot.command("countries", async (ctx) => {
+    await showSmsCountries(ctx);
+  });
+
   bot.action(/^sms_order_([a-z_0-9]+)$/, async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const serviceCode = ctx.match[1];
