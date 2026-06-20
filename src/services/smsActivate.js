@@ -62,10 +62,19 @@ async function smsActivateRequest(action, extraParams = {}) {
 async function getServices(country) {
   const params = {};
   if (country) {
-    // Country can be a 2-letter code or numeric ID
+    // SMS-Activate API uses numeric country IDs
+    // Common: MY=153, ID=6, US=1, SG=170, TH=14, PH=11, VN=13
     params.country = country;
   }
   const result = await smsActivateRequest("getServicesList", params);
+
+  // If country param fails, try without it
+  if (!result?.services && !country) {
+    console.log(
+      "[DEBUG] getServicesList returned unexpected data, trying without country filter",
+    );
+    return [];
+  }
 
   if (result?.status === "success" && Array.isArray(result.services)) {
     console.log(`[DEBUG] Found ${result.services.length} SMS services`);

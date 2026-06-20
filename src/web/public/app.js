@@ -10,6 +10,7 @@ let tgWebApp = null;
 const orderForm = document.getElementById("order-form");
 const serviceSelect = document.getElementById("service-select");
 const smsServiceSelect = document.getElementById("sms-service-select");
+const smsSearchInput = document.getElementById("sms-service-search");
 const smsOrderForm = document.getElementById("sms-order-form");
 const smsResult = document.getElementById("sms-result");
 const smsError = document.getElementById("sms-error");
@@ -317,25 +318,54 @@ async function loadServices() {
 function renderSmsServices(services) {
   if (!smsServiceSelect) return;
   smsServiceList = services || [];
-  smsServiceSelect.innerHTML =
-    '<option value="">Select an SMS service...</option>';
   if (smsError) smsError.style.display = "none";
   if (smsResult) smsResult.textContent = "";
+  populateSmsDropdown();
 
-  if (!services || services.length === 0) {
+  if (smsSearchInput) {
+    smsSearchInput.style.display = "block";
+    smsSearchInput.placeholder = `Search ${services?.length || 0} services...`;
+    smsSearchInput.disabled = false;
+  }
+}
+
+function populateSmsDropdown(filter) {
+  if (!smsServiceSelect) return;
+  const query = (filter || smsSearchInput?.value || "").toLowerCase().trim();
+
+  smsServiceSelect.innerHTML = '<option value="">Select a service...</option>';
+
+  const filtered = query
+    ? smsServiceList.filter(
+        (s) =>
+          s.name.toLowerCase().includes(query) ||
+          s.code.toLowerCase().includes(query),
+      )
+    : smsServiceList;
+
+  if (!filtered.length) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = "No SMS services available";
+    opt.textContent = query
+      ? `No match for "${query}"`
+      : "No SMS services available";
     opt.disabled = true;
     smsServiceSelect.appendChild(opt);
     return;
   }
 
-  services.forEach((s) => {
+  filtered.forEach((s) => {
     const opt = document.createElement("option");
     opt.value = s.code;
     opt.textContent = `${s.name} — $${s.costUsd?.toFixed(2) || "?"} (stock: ${s.stock || "?"})`;
     smsServiceSelect.appendChild(opt);
+  });
+}
+
+// Live search filtering
+if (smsSearchInput) {
+  smsSearchInput.addEventListener("input", () => {
+    populateSmsDropdown(smsSearchInput.value);
   });
 }
 
