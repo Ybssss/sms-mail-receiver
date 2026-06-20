@@ -752,7 +752,16 @@ function createBot() {
   }
 
   async function editMainMenu(ctx, user) {
-    const text = editMainMenuHtml(user);
+    const name = ctx?.from?.first_name || "there";
+    const isAdminUser =
+      user.telegramId &&
+      config.adminTelegramIds.includes(String(user.telegramId));
+    const userCmds =
+      "🟢 User: /balance · /topup · /order [domain] · /list · /mail · /cancel · /web · /smslist";
+    const adminCmds = isAdminUser
+      ? "\n🔴 Admin: /approve · /setqr_tng · /setqr_bank"
+      : "";
+    const text = `Hi ${name}! 👋\n\n${userCmds}${adminCmds}`;
     const inline = mainInlineKeyboard(user.accessToken);
     try {
       await ctx.editMessageText(text, inline);
