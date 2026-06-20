@@ -338,11 +338,37 @@ function createWebApp() {
 
   app.post("/api/orders", orderLimiter, async (req, res) => {
     try {
-      const { site, domain } =
-        await require("../services/orderService").resolveOrderDomain(
-          req.body?.domain || "",
-          req.body?.site || "",
-        );
+      const rawSite = (req.body?.site || "").trim();
+      const rawDomain = (req.body?.domain || "").trim();
+
+      console.log("[DEBUG] POST /api/orders received:", { rawSite, rawDomain });
+
+      // Prefer client-provided site/domain, fall back to resolveOrderDomain
+      let site, domain;
+      if (rawSite && rawDomain) {
+        site = rawSite;
+        domain = rawDomain;
+      } else {
+        const resolved =
+          await require("../services/orderService").resolveOrderDomain(
+            rawDomain || rawSite,
+            rawSite,
+          );
+        site = resolved.site;
+        domain = resolved.domain;
+      }
+
+      if (!site) {
+        res.status(400).json({ error: "site is required" });
+        return;
+      }
+      if (!domain) {
+        res.status(400).json({ error: "domain is required" });
+        return;
+      }
+
+      console.log("[DEBUG] Placing order:", { site, domain });
+
       const { order, gemsCharged } = await placeOrder(
         req.user.id,
         site,
@@ -350,6 +376,7 @@ function createWebApp() {
       );
       res.status(201).json({ order, gemsCharged });
     } catch (err) {
+      console.error("[DEBUG] Order error:", err.message);
       if (err.code === "INSUFFICIENT_GEMS") {
         res.status(402).json({
           error: err.message,

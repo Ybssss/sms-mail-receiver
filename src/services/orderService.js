@@ -61,11 +61,14 @@ async function estimateOrderCost(domain) {
 /**
  * Resolve a domain name to its proper site + domain fields.
  * Looks up the Hero-SMS domain list to find the matching entry.
- * Falls back to defaults if domain is not found.
+ * Falls back to using the domain name itself as site if not found.
  */
 async function resolveOrderDomain(domainName, siteHint) {
   const domains = await getDomains();
   const list = Array.isArray(domains) ? domains : [];
+
+  console.log("[DEBUG] resolveOrderDomain input:", { domainName, siteHint });
+  console.log("[DEBUG] domain list count:", list.length);
 
   // Try to find the exact match by name or domain field
   const match = list.find(
@@ -73,17 +76,29 @@ async function resolveOrderDomain(domainName, siteHint) {
   );
 
   if (match) {
-    const site = (match.site || match.name || "").trim();
+    console.log("[DEBUG] Found match:", JSON.stringify(match));
+    // Hero-SMS may return domain objects with fields: name, domain, site, cost, count, currency
+    // Prioritize: site → name → domain as the 'site' value for ordering
+    const site = (match.site || match.name || match.domain || "").trim();
     const domain = (match.domain || match.name || "").trim();
+    console.log("[DEBUG] Resolved:", { site, domain });
     if (site && domain) return { site, domain };
   }
 
-  // Fallback: ensure we have non-empty values
+  // Fallback: if no match found, use what we have
   const site = (siteHint || domainName || "").trim();
-  const domain = (domainName || siteHint || "").trim();
-  if (!site)
-    throw new Error("Could not determine site for domain: " + domainName);
-  if (!domain) throw new Error("Could not determine domain name");
+  const domain = (domainName || "").trim();
+  console.log("[DEBUG] Fallback resolve:", { site, domain });
+  if (!site) {
+    throw new Error(
+      "Could not determine site for domain: " +
+        domainName +
+        ". Ensure domain exists in Hero-SMS.",
+    );
+  }
+  if (!domain) {
+    throw new Error("Could not determine domain name");
+  }
   return { site, domain };
 }
 

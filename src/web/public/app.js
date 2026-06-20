@@ -293,17 +293,21 @@ async function createOrder(event) {
   const selected = domainSelect.value;
   if (!selected) return;
 
-  orderForm.querySelector("button").disabled = true;
+  const submitBtn = orderForm.querySelector("button");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Ordering…";
+
   try {
     const domain = domainList.find((d) => (d.name || d.domain) === selected);
-    // Send the domain identifier; backend will look up correct site/domain fields
-    const domainName = (domain.name || domain.domain || "").trim();
-    if (!domainName) {
-      throw new Error("Invalid domain selection");
-    }
+    const site = (domain.site || domain.name || domain.domain || "").trim();
+    const dom = (domain.domain || domain.name || "").trim();
+
+    if (!site) throw new Error("Invalid service: missing site");
+    if (!dom) throw new Error("Invalid service: missing domain");
+
     await api("/api/orders", {
       method: "POST",
-      body: JSON.stringify({ domain: domainName }),
+      body: JSON.stringify({ site, domain: dom }),
     });
     await loadOrders();
     await loadWallet();
@@ -311,7 +315,8 @@ async function createOrder(event) {
     liveStatus.textContent = err.message;
     liveStatus.className = "status-pill error";
   } finally {
-    orderForm.querySelector("button").disabled = false;
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Order now";
   }
 }
 
