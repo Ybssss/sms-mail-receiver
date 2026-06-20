@@ -107,15 +107,58 @@ async function getServices(country) {
 async function getPrices(service, country) {
   const params = {};
   if (service) params.service = service;
-  if (country) params.country = country;
+  // getPrices requires numeric country ID, not alpha-2 code
+  if (country) {
+    const numericCountry = !isNaN(Number(country))
+      ? String(Number(country))
+      : null;
+    if (numericCountry && numericCountry !== "NaN") {
+      params.country = numericCountry;
+    }
+  }
 
   const result = await smsActivateRequest("getPrices", params);
 
-  // Result format: Array of { "serviceCode": { cost, count, physicalCount } }
-  if (Array.isArray(result)) {
-    return result;
+  // SMS-Activate returns raw text like:
+  // {"oz":{"oz":"0.15","count":100}}
+  // The heroic API may return it differently
+  if (typeof result === "string" && result.trim()) {
+    try {
+      const parsed = JSON.parse(result);
+      // Format: { "serviceCode": { "serviceCode": "price", "count": 100 } } or similar
+      const prices = [];
+      for (const [code, data] of Object.entries(parsed)) {
+        if (typeof data === "object" && data !== null) {
+          const cost =
+            data[code] ||
+            data.cost ||
+            Object.values(data).find(
+              (v) => typeof v === "string" && !isNaN(Number(v)),
+            ) ||
+            0;
+          const count = data.count || 0;
+          prices.push({ [code]: { cost: Number(cost), count: Number(count) } });
+        }
+      }
+      if (prices.length > 0) return prices;
+    } catch {}
   }
 
+  // Result format: Array of { "serviceCode": { cost, count, physicalCount } }
+  if (Array.isArray(result)) {
+    if (result.length > 0) return result;
+  }
+
+  // Maybe wrapped in status object
+  if (result?.status === "success" && result.data) {
+    return Array.isArray(result.data) ? result.data : [];
+  }
+
+  console.log(
+    "[DEBUG] getPrices unexpected format:",
+    typeof result,
+    JSON.stringify(result).slice(0, 300),
+  );
   return [];
 }
 
@@ -125,7 +168,26 @@ async function getPrices(service, country) {
  */
 async function getCountries() {
   const result = await smsActivateRequest("getCountries");
-  return result;
+  // getCountries returns a plain array: [{ id: 2, rus: "...", eng: "Kazakhstan", ... }, ...]
+  if (Array.isArray(result)) {
+    console.log(
+      `[DEBUG] getCountries: ${result.length} countries, first:`,
+      result[0],
+    );
+    return result;
+  }
+  if (result?.status === "success" && Array.isArray(result.countries)) {
+    return result.countries;
+  }
+  if (result?.status === "success" && Array.isArray(result.data)) {
+    return result.data;
+  }
+  console.log(
+    "[DEBUG] getCountries unexpected format:",
+    typeof result,
+    JSON.stringify(result).slice(0, 300),
+  );
+  return [];
 }
 
 /**

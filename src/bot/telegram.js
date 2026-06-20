@@ -75,12 +75,8 @@ function mainInlineKeyboard(token) {
       Markup.button.callback("❓ Help", "help_menu"),
     ],
   ];
-
   const appUrl = webAppUrl(token);
-  if (appUrl) {
-    buttons.push([Markup.button.webApp("🌐 Open dashboard", appUrl)]);
-  }
-
+  if (appUrl) buttons.push([Markup.button.webApp("🌐 Open dashboard", appUrl)]);
   return Markup.inlineKeyboard(buttons);
 }
 
@@ -88,12 +84,8 @@ function replyMainMenu(token) {
   const row1 = [BTN.BALANCE, BTN.TOPUP];
   const row2 = [BTN.ORDER, BTN.LIST];
   const row3 = [BTN.DOMAINS];
-
   const appUrl = webAppUrl(token);
-  if (appUrl) {
-    row3.push(Markup.button.webApp(BTN.WEB, appUrl));
-  }
-
+  if (appUrl) row3.push(Markup.button.webApp(BTN.WEB, appUrl));
   return Markup.keyboard([row1, row2, row3]).resize().persistent();
 }
 
@@ -109,12 +101,10 @@ function orderListKeyboard(orders) {
     }
     return buttons;
   });
-
   rows.push([
     Markup.button.callback("🛒 New order", "order_menu"),
     Markup.button.callback("« Menu", "main_menu"),
   ]);
-
   return Markup.inlineKeyboard(rows);
 }
 
@@ -133,11 +123,7 @@ function findTokenForOrder(order) {
   const { getDb } = require("../db/database");
   const row = getDb()
     .prepare(
-      `
-      SELECT u.access_token FROM users u
-      JOIN email_orders e ON e.user_id = u.id
-      WHERE e.id = ?
-    `,
+      "SELECT u.access_token FROM users u JOIN email_orders e ON e.user_id = u.id WHERE e.id = ?",
     )
     .get(order.id);
   return row?.access_token || "";
@@ -169,7 +155,6 @@ async function showTopupMenu(ctx, user) {
   ]);
   buttons.push([Markup.button.callback("Custom amount (web)", "topup_web")]);
   buttons.push([Markup.button.callback("« Menu", "main_menu")]);
-
   await ctx.reply(
     [
       "Choose a gem package:",
@@ -191,7 +176,6 @@ async function showOrderList(ctx, user) {
   await ctx.reply(text, extra);
 }
 
-// ── Paginated domain display ─────────────────────────────────
 const PAGE_SIZE = 6;
 
 async function showDomains(ctx, page = 0) {
@@ -200,10 +184,8 @@ async function showDomains(ctx, page = 0) {
     const ex = await getExchangeInfo();
     const list = Array.isArray(domains) ? domains : [];
     const totalPages = Math.ceil(list.length / PAGE_SIZE) || 1;
-
     const start = page * PAGE_SIZE;
     const pageItems = list.slice(start, start + PAGE_SIZE);
-
     const lines = await Promise.all(
       pageItems.map(async (d) => {
         const name = d.name || d.domain;
@@ -223,47 +205,35 @@ async function showDomains(ctx, page = 0) {
         ),
       ];
     });
-
     const navRow = [];
-    if (page > 0) {
+    if (page > 0)
       navRow.push(Markup.button.callback("◀ Back", `domains_page_${page - 1}`));
-    }
-    navRow.push(Markup.button.callback("📋 Email", "main_menu"));
-    if (page < totalPages - 1) {
+    navRow.push(Markup.button.callback("📋 Menu", "main_menu"));
+    if (page < totalPages - 1)
       navRow.push(Markup.button.callback("Next ▶", `domains_page_${page + 1}`));
-    }
     if (navRow.length) buttons.push(navRow);
-
-    // SMS services link
     buttons.push([Markup.button.callback("📱 SMS Services", "sms_services")]);
 
     const text = lines.length > 1 ? lines.join("\n") : "No domains returned.";
-    try {
-      await ctx.editMessageText(text, Markup.inlineKeyboard(buttons));
-    } catch {
-      await ctx.reply(text, Markup.inlineKeyboard(buttons));
-    }
+    await ctx
+      .editMessageText(text, Markup.inlineKeyboard(buttons))
+      .catch(() => ctx.reply(text, Markup.inlineKeyboard(buttons)));
   } catch (err) {
-    const text = `Hero-SMS error: ${err.message}`;
-    try {
-      await ctx.editMessageText(text);
-    } catch {
-      await ctx.reply(text);
-    }
+    await ctx
+      .editMessageText(`Hero-SMS error: ${err.message}`)
+      .catch(() => ctx.reply(`Hero-SMS error: ${err.message}`));
   }
 }
 
 async function showSmsServices(ctx, page = 0) {
   try {
-    const { config } = require("../config");
-    const country = config.smsActivateCountry || config.smsActivateCountryId;
-    let services = await getSmsServices(country);
+    const countryId = config.smsActivateCountryId; // numeric ID for API
+    let services = await getSmsServices(countryId);
     if (!Array.isArray(services)) services = [];
 
-    // Fetch prices too
     let prices = [];
     try {
-      prices = await getSmsPrices(null, country);
+      prices = await getSmsPrices(null, countryId);
     } catch {}
     const priceMap = {};
     if (Array.isArray(prices)) {
@@ -282,8 +252,12 @@ async function showSmsServices(ctx, page = 0) {
     const start = page * PAGE_SIZE;
     const pageItems = list.slice(start, start + PAGE_SIZE);
 
+    const countryLabel =
+      config.smsActivateCountryName ||
+      config.smsActivateCountryId ||
+      "all countries";
     const lines = [
-      `📱 SMS Activation Services (${config.smsActivateCountry})`,
+      `📱 SMS Activation Services (${countryLabel})`,
       `Total: ${list.length} services\n`,
     ];
     pageItems.forEach((s) => {
@@ -296,39 +270,29 @@ async function showSmsServices(ctx, page = 0) {
     const buttons = pageItems.map((s) => [
       Markup.button.callback(`📱 ${s.name}`, `sms_order_${s.code}`),
     ]);
-
     const navRow = [];
-    if (page > 0) {
+    if (page > 0)
       navRow.push(
         Markup.button.callback("◀ Back", `sms_services_page_${page - 1}`),
       );
-    }
     navRow.push(Markup.button.callback("📋 Email", "domains"));
-    if (page < totalPages - 1) {
+    if (page < totalPages - 1)
       navRow.push(
         Markup.button.callback("Next ▶", `sms_services_page_${page + 1}`),
       );
-    }
     if (navRow.length) buttons.push(navRow);
-
-    // Add country picker button
     buttons.push([
       Markup.button.callback("🌍 Change Country", "sms_countries"),
     ]);
 
     const text = lines.join("\n");
-    try {
-      await ctx.editMessageText(text, Markup.inlineKeyboard(buttons));
-    } catch {
-      await ctx.reply(text, Markup.inlineKeyboard(buttons));
-    }
+    await ctx
+      .editMessageText(text, Markup.inlineKeyboard(buttons))
+      .catch(() => ctx.reply(text, Markup.inlineKeyboard(buttons)));
   } catch (err) {
-    const text = `SMS services error: ${err.message}`;
-    try {
-      await ctx.editMessageText(text);
-    } catch {
-      await ctx.reply(text);
-    }
+    await ctx
+      .editMessageText(`SMS services error: ${err.message}`)
+      .catch(() => ctx.reply(`SMS services error: ${err.message}`));
   }
 }
 
@@ -340,54 +304,45 @@ async function showSmsCountries(ctx, page = 0) {
     const start = page * PAGE_SIZE;
     const pageItems = list.slice(start, start + PAGE_SIZE);
 
+    const currentId = config.smsActivateCountryId || config.smsActivateCountry;
     const lines = [
-      `🌍 Choose SMS Country (Current: ${config.smsActivateCountry})`,
+      `🌍 Choose SMS Country (Current: ${config.smsActivateCountryName || currentId || "none"})`,
       "",
     ];
     pageItems.forEach((c) => {
-      const id = typeof c === "object" ? c.id || c.code : c;
-      const name = typeof c === "object" ? c.name || c.eng || c.code : c;
+      const id = typeof c === "object" ? c.id : c;
+      const name =
+        (typeof c === "object" ? c.eng || c.rus || c.chn : c) || String(id);
       lines.push(`• ${name} (ID: ${id})`);
     });
     if (totalPages > 1) lines.push(`\nPage ${page + 1} / ${totalPages}`);
 
     const buttons = pageItems.map((c) => {
-      const id = typeof c === "object" ? c.id || c.code : c;
-      const name = typeof c === "object" ? c.name || c.eng || c.code : c;
+      const id = typeof c === "object" ? c.id : c;
+      const name =
+        (typeof c === "object" ? c.eng || c.rus || c.chn : c) || String(id);
       return [Markup.button.callback(`${name}`, `sms_country_${id}`)];
     });
-
     const navRow = [];
-    if (page > 0) {
+    if (page > 0)
       navRow.push(
         Markup.button.callback("◀ Back", `sms_countries_page_${page - 1}`),
       );
-    }
     navRow.push(Markup.button.callback("📱 SMS Services", "sms_services"));
-    if (page < totalPages - 1) {
+    if (page < totalPages - 1)
       navRow.push(
         Markup.button.callback("Next ▶", `sms_countries_page_${page + 1}`),
       );
-    }
     if (navRow.length) buttons.push(navRow);
-
     buttons.push([Markup.button.callback("« Menu", "main_menu")]);
 
-    try {
-      await ctx.editMessageText(
-        lines.join("\n"),
-        Markup.inlineKeyboard(buttons),
-      );
-    } catch {
-      await ctx.reply(lines.join("\n"), Markup.inlineKeyboard(buttons));
-    }
+    await ctx
+      .editMessageText(lines.join("\n"), Markup.inlineKeyboard(buttons))
+      .catch(() => ctx.reply(lines.join("\n"), Markup.inlineKeyboard(buttons)));
   } catch (err) {
-    const msg = `Country list error: ${err.message}`;
-    try {
-      await ctx.editMessageText(msg);
-    } catch {
-      await ctx.reply(msg);
-    }
+    await ctx
+      .editMessageText(`Country list error: ${err.message}`)
+      .catch(() => ctx.reply(`Country list error: ${err.message}`));
   }
 }
 
@@ -415,17 +370,14 @@ async function showMainMenu(ctx, user, greeting) {
   const isAdminUser =
     user.telegramId &&
     config.adminTelegramIds.includes(String(user.telegramId));
-
   const userCommands = [
     "🟢 User commands:",
     "/balance · /topup · /order [domain]",
     "/list · /mail <id> · /domains · /cancel <id> · /web",
   ];
-
   const adminCommands = isAdminUser
     ? ["", "🔴 Admin commands:", "/approve [id] · /setqr_tng · /setqr_bank"]
     : [];
-
   await ctx.reply(
     [
       `Hi ${name}! 👋`,
@@ -436,12 +388,7 @@ async function showMainMenu(ctx, user, greeting) {
       ...userCommands,
       ...adminCommands,
     ].join("\n"),
-    {
-      reply_markup: {
-        ...inline.reply_markup,
-        ...reply.reply_markup,
-      },
-    },
+    { reply_markup: { ...inline.reply_markup, ...reply.reply_markup } },
   );
 }
 
@@ -450,23 +397,16 @@ function createBot() {
     console.warn("TELEGRAM_BOT_TOKEN not set — bot disabled");
     return null;
   }
-
   const bot = new Telegraf(config.botToken);
 
   setNotifier(async (order, source) => {
     const { getDb } = require("../db/database");
     const user = getDb()
       .prepare(
-        `
-        SELECT u.telegram_id FROM users u
-        JOIN email_orders e ON e.user_id = u.id
-        WHERE e.id = ?
-      `,
+        "SELECT u.telegram_id FROM users u JOIN email_orders e ON e.user_id = u.id WHERE e.id = ?",
       )
       .get(order.id);
-
     if (!user?.telegram_id) return;
-
     const token = findTokenForOrder(order);
     const appUrl = webAppUrl(token);
     const extra = appUrl
@@ -474,7 +414,6 @@ function createBot() {
           [Markup.button.webApp("🌐 View in app", appUrl)],
         ])
       : undefined;
-
     try {
       await bot.telegram.sendMessage(
         user.telegram_id,
@@ -500,37 +439,29 @@ function createBot() {
     const isAdminUser =
       user.telegramId &&
       config.adminTelegramIds.includes(String(user.telegramId));
-
     const userCommands = [
       "🟢 User commands:",
       "/balance — view gems & exchange rate",
-      "/topup — buy gems (FPX, TnG, Stars, bank)",
-      "/order [domain] — order a disposable email",
-      "/list — your active orders",
-      "/mail <id> — refresh a specific order",
-      "/domains — list services & prices",
-      "/cancel <id> — cancel a pending order",
-      "/web — open web dashboard",
+      "/topup — buy gems",
+      "/order [domain] — order email",
+      "/list — active orders",
+      "/mail <id> — refresh order",
+      "/domains — list services",
+      "/cancel <id> — cancel order",
+      "/web — open dashboard",
     ];
-
     const adminCommands = isAdminUser
       ? [
           "",
           "🔴 Admin commands:",
-          "/approve [id] — approve manual payment",
-          "/setqr_tng — reply to photo to set TnG QR",
-          "/setqr_bank — reply to photo to set Bank QR",
+          "/approve [id] — approve payment",
+          "/setqr_tng — set TnG QR",
+          "/setqr_bank — set Bank QR",
           "/webhook — show webhook URL",
         ]
       : [];
-
     await ctx.reply(
-      [
-        "Quick actions: use the keyboard buttons or inline menu.",
-        "",
-        ...userCommands,
-        ...adminCommands,
-      ].join("\n"),
+      ["Quick actions:", "", ...userCommands, ...adminCommands].join("\n"),
       mainInlineKeyboard(user.accessToken),
     );
   });
@@ -540,7 +471,6 @@ function createBot() {
     async (ctx) => {
       const user = getOrCreateTelegramUser(ctx.from.id);
       const text = ctx.message.text;
-
       if (text === BTN.BALANCE) {
         await ctx.reply(
           await formatBalanceMessage(user.id),
@@ -573,7 +503,6 @@ function createBot() {
       mainInlineKeyboard(user.accessToken),
     );
   });
-
   bot.command("topup", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     await showTopupMenu(ctx, user);
@@ -603,7 +532,7 @@ function createBot() {
     try {
       const result = await adminApprovePayment(id);
       await ctx.reply(
-        `Approved #${id}. Credited ${formatGems(result.payment.gems)} gems. New balance tracked in ledger.`,
+        `Approved #${id}. Credited ${formatGems(result.payment.gems)} gems.`,
       );
     } catch (err) {
       await ctx.reply(`Failed: ${err.message}`);
@@ -613,16 +542,15 @@ function createBot() {
   bot.command("webhook", async (ctx) => {
     await ctx.reply(
       [
-        "Configure this URL in your Hero-SMS webhook settings:",
+        "Configure this URL in Hero-SMS webhook:",
         webhookUrl(),
         "",
         config.webhookSecret
-          ? "Webhook secret is enabled on this server."
+          ? "Secret is enabled."
           : "Optional: set WEBHOOK_SECRET in env.",
       ].join("\n"),
     );
   });
-
   bot.command("web", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const appUrl = webAppUrl(user.accessToken);
@@ -633,11 +561,9 @@ function createBot() {
       : mainInlineKeyboard(user.accessToken);
     await ctx.reply("Open your dashboard:", extra);
   });
-
   bot.command("domains", async (ctx) => {
     await showDomains(ctx);
   });
-
   bot.command("list", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     await showOrderList(ctx, user);
@@ -650,13 +576,11 @@ function createBot() {
       await ctx.reply("Usage: /mail 1");
       return;
     }
-
     const order = getOrderById(id, user.id);
     if (!order) {
       await ctx.reply("Order not found.");
       return;
     }
-
     try {
       const remote = await getEmail(order.heroId);
       const updated = saveOrder(user.id, remote);
@@ -678,7 +602,6 @@ function createBot() {
       .filter(Boolean);
     const rawSite = parts[0] || "";
     const rawDomain = parts[1] || "";
-
     try {
       const { site, domain } = await resolveOrderDomain(rawDomain, rawSite);
       const { costGems } = await estimateOrderCost(domain);
@@ -715,13 +638,11 @@ function createBot() {
       await ctx.reply("Usage: /cancel 1");
       return;
     }
-
     const order = getOrderById(id, user.id);
     if (!order) {
       await ctx.reply("Order not found.");
       return;
     }
-
     try {
       await cancelOrderWithRefund(user.id, order);
       await ctx.reply(
@@ -733,6 +654,7 @@ function createBot() {
     }
   });
 
+  // ── Inline button actions ───────────────────────────────────
   bot.action("main_menu", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     await ctx.answerCbQuery();
@@ -750,12 +672,9 @@ function createBot() {
       ? "\n🔴 Admin: /approve · /setqr_tng · /setqr_bank"
       : "";
     const text = `Hi ${name}! 👋\n\n${userCmds}${adminCmds}`;
-    const inline = mainInlineKeyboard(user.accessToken);
-    try {
-      await ctx.editMessageText(text, inline);
-    } catch {
-      await ctx.reply(text, inline);
-    }
+    await ctx
+      .editMessageText(text, mainInlineKeyboard(user.accessToken))
+      .catch(() => ctx.reply(text, mainInlineKeyboard(user.accessToken)));
   }
 
   bot.action("help_menu", async (ctx) => {
@@ -763,17 +682,15 @@ function createBot() {
     await ctx.answerCbQuery();
     const text = [
       "💎 Balance — gems & exchange rate",
-      "➕ Top up — buy gems (FPX, TnG, Stars, bank)",
+      "➕ Top up — buy gems",
       "🛒 Order mail — disposable email for activations",
-      "📬 Active mail — your orders + refresh/cancel buttons",
+      "📬 Active mail — your orders + refresh/cancel",
       "📋 Domains — prices & one-tap order",
-      "🌐 Open app — full web dashboard inside Telegram",
+      "🌐 Open app — full web dashboard",
     ].join("\n");
-    try {
-      await ctx.editMessageText(text, mainInlineKeyboard(user.accessToken));
-    } catch {
-      await ctx.reply(text, mainInlineKeyboard(user.accessToken));
-    }
+    await ctx
+      .editMessageText(text, mainInlineKeyboard(user.accessToken))
+      .catch(() => ctx.reply(text, mainInlineKeyboard(user.accessToken)));
   });
 
   bot.action("balance", async (ctx) => {
@@ -783,11 +700,9 @@ function createBot() {
       user.telegramId &&
       config.adminTelegramIds.includes(String(user.telegramId));
     const text = await formatBalanceMessage(user.id, isAdminUser);
-    try {
-      await ctx.editMessageText(text, mainInlineKeyboard(user.accessToken));
-    } catch {
-      await ctx.reply(text, mainInlineKeyboard(user.accessToken));
-    }
+    await ctx
+      .editMessageText(text, mainInlineKeyboard(user.accessToken))
+      .catch(() => ctx.reply(text, mainInlineKeyboard(user.accessToken)));
   });
 
   bot.action("topup_menu", async (ctx) => {
@@ -813,55 +728,42 @@ function createBot() {
       wallet.methods.map((m) => `• ${m.name}`).join("\n") ||
         "Configure payment env vars on server.",
     ].join("\n");
-    const kb = Markup.inlineKeyboard(buttons);
-    try {
-      await ctx.editMessageText(text, kb);
-    } catch {
-      await ctx.reply(text, kb);
-    }
+    await ctx
+      .editMessageText(text, Markup.inlineKeyboard(buttons))
+      .catch(() => ctx.reply(text, Markup.inlineKeyboard(buttons)));
   }
 
   bot.action(/^topup_pkg_(\d+)$/, async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const packageId = parseInt(ctx.match[1], 10);
     await ctx.answerCbQuery();
-
     const methods = [];
-    if (config.telegramPaymentProviderToken) {
+    if (config.telegramPaymentProviderToken)
       methods.push([
         Markup.button.callback("⭐ Telegram Stars", `pay_stars_${packageId}`),
       ]);
-    }
-    if (config.billplzApiKey) {
+    if (config.billplzApiKey)
       methods.push([
         Markup.button.callback(
           "💳 FPX / Card / TnG",
           `pay_billplz_${packageId}`,
         ),
       ]);
-    }
-    if (config.manualTngPhone) {
+    if (config.manualTngPhone)
       methods.push([
         Markup.button.callback("📱 TnG manual", `pay_tng_${packageId}`),
       ]);
-    }
-    if (config.manualBankAccount) {
+    if (config.manualBankAccount)
       methods.push([
         Markup.button.callback("🏦 Bank transfer", `pay_bank_${packageId}`),
       ]);
-    }
-
     const text = methods.length
       ? "Select payment method:"
       : "No payment methods configured on server.";
     const kb = methods.length
       ? Markup.inlineKeyboard(methods)
       : mainInlineKeyboard(user.accessToken);
-    try {
-      await ctx.editMessageText(text, kb);
-    } catch {
-      await ctx.reply(text, kb);
-    }
+    await ctx.editMessageText(text, kb).catch(() => ctx.reply(text, kb));
   });
 
   bot.action(/^pay_billplz_(\d+)$/, async (ctx) => {
@@ -873,23 +775,14 @@ function createBot() {
         method: "billplz",
         packageId,
       });
-      const text = `Pay here (FPX / card / TnG / GrabPay):\n${result.billUrl}`;
-      try {
-        await ctx.editMessageText(text);
-      } catch {
-        await ctx.reply(text);
-      }
+      await ctx
+        .editMessageText(`Pay here:\n${result.billUrl}`)
+        .catch(() => ctx.reply(`Pay here:\n${result.billUrl}`));
     } catch (err) {
-      const text = `Payment error: ${err.message}`;
-      try {
-        await ctx.editMessageText(text);
-      } catch {
-        await ctx.reply(text);
-      }
+      await ctx.reply(`Payment error: ${err.message}`);
     }
   });
 
-  // Load saved QR file IDs from DB
   function getQrFileId(type) {
     try {
       const { getDb } = require("../db/database");
@@ -911,9 +804,7 @@ function createBot() {
       "",
       `Payment ID: #${result.paymentId}`,
     ];
-
     const caption = lines.join("\n");
-
     const confirmButtons = Markup.inlineKeyboard([
       [
         Markup.button.callback(
@@ -928,45 +819,35 @@ function createBot() {
         ),
       ],
     ]);
-
     if (fileId) {
       try {
-        await ctx.replyWithPhoto(fileId, {
-          caption,
-          ...confirmButtons,
-        });
+        await ctx.replyWithPhoto(fileId, { caption, ...confirmButtons });
         return;
-      } catch {
-        // File ID expired or invalid — fall through to text
-      }
+      } catch {}
     }
-
     await ctx.reply(caption, confirmButtons);
   }
 
   bot.action(/^pay_tng_(\d+)$/, async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
-    const packageId = parseInt(ctx.match[1], 10);
     await ctx.answerCbQuery();
     try {
       const result = await createTopup(user.id, {
         method: "manual_tng",
-        packageId,
+        packageId: parseInt(ctx.match[1], 10),
       });
       await sendManualPayment(ctx, result, "📱 Touch n Go eWallet");
     } catch (err) {
       await ctx.reply(`Payment error: ${err.message}`);
     }
   });
-
   bot.action(/^pay_bank_(\d+)$/, async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
-    const packageId = parseInt(ctx.match[1], 10);
     await ctx.answerCbQuery();
     try {
       const result = await createTopup(user.id, {
         method: "manual_bank",
-        packageId,
+        packageId: parseInt(ctx.match[1], 10),
       });
       await sendManualPayment(ctx, result, "🏦 Bank Transfer");
     } catch (err) {
@@ -974,13 +855,10 @@ function createBot() {
     }
   });
 
-  // ── Manual payment confirmation buttons ──────────────────────
   bot.action(/^confirm_paid_(\d+)$/, async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const paymentId = parseInt(ctx.match[1], 10);
     await ctx.answerCbQuery();
-
-    // Get the payment to verify it belongs to this user and is pending
     const payment = require("../services/payments/store").getPaymentById(
       paymentId,
     );
@@ -992,8 +870,6 @@ function createBot() {
       await ctx.reply("This payment has already been processed.");
       return;
     }
-
-    // Mark the meta with a user_confirmed flag
     const meta = {
       ...(payment.meta || {}),
       userConfirmedAt: new Date().toISOString(),
@@ -1001,8 +877,6 @@ function createBot() {
       userUsername: ctx.from.username || null,
     };
     require("../services/payments/store").updatePayment(paymentId, { meta });
-
-    // Notify all admins
     const adminIds = config.adminTelegramIds;
     const msg = [
       "📢 User confirmed manual payment!",
@@ -1014,21 +888,16 @@ function createBot() {
       "",
       "Approve via /approve or web admin panel.",
     ].join("\n");
-
     for (const adminId of adminIds) {
       try {
         await bot.telegram.sendMessage(adminId, msg);
-      } catch (e) {
-        console.error("Failed to notify admin", adminId, e.message);
-      }
+      } catch {}
     }
-
     await ctx.reply(
       [
         "✅ Your payment confirmation has been sent to the admin.",
         "",
-        "Once the admin verifies the payment, gems will be credited to your account.",
-        "You will receive a notification when approved.",
+        "Once verified, gems will be credited to your account.",
       ].join("\n"),
     );
   });
@@ -1037,7 +906,6 @@ function createBot() {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const paymentId = parseInt(ctx.match[1], 10);
     await ctx.answerCbQuery();
-
     const payment = require("../services/payments/store").getPaymentById(
       paymentId,
     );
@@ -1049,47 +917,41 @@ function createBot() {
       await ctx.reply("This payment has already been processed.");
       return;
     }
-
-    // Cancel the payment
     require("../services/payments/store").updatePayment(paymentId, {
       status: "cancelled",
     });
-
-    const cancelText =
-      "❌ Payment cancelled. You can create a new top-up anytime.";
-    try {
-      await ctx.editMessageText(
-        cancelText,
+    await ctx
+      .editMessageText(
+        "❌ Payment cancelled.",
         mainInlineKeyboard(user.accessToken),
+      )
+      .catch(() =>
+        ctx.reply(
+          "❌ Payment cancelled.",
+          mainInlineKeyboard(user.accessToken),
+        ),
       );
-    } catch {
-      await ctx.reply(cancelText, mainInlineKeyboard(user.accessToken));
-    }
   });
 
   bot.action(/^pay_stars_(\d+)$/, async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const packageId = parseInt(ctx.match[1], 10);
     await ctx.answerCbQuery();
-
     try {
       const wallet = await getWalletInfo(user.id);
       const pkg = wallet.packages.find((p) => p.id === packageId);
       if (!pkg) throw new Error("Package not found");
-
       const stars = Math.max(1, Math.ceil(pkg.priceMyr / config.myrPerStar));
-      const payload = JSON.stringify({
-        userId: user.id,
-        packageId,
-        gems: pkg.gems,
-      });
-
       await ctx.replyWithInvoice(
         buildStarsPayload({
           title: pkg.name,
-          description: `${pkg.gems.toLocaleString()} gems for Hero-SMS orders`,
+          description: `${pkg.gems.toLocaleString()} gems`,
           starCount: stars,
-          payload,
+          payload: JSON.stringify({
+            userId: user.id,
+            packageId,
+            gems: pkg.gems,
+          }),
         }),
       );
     } catch (err) {
@@ -1101,21 +963,15 @@ function createBot() {
     const user = getOrCreateTelegramUser(ctx.from.id);
     await ctx.answerCbQuery();
     const appUrl = webAppUrl(user.accessToken);
-    let text, kb;
-    if (appUrl) {
-      text = "Top up on the dashboard:";
-      kb = Markup.inlineKeyboard([
-        [Markup.button.webApp("🌐 Open top-up", `${appUrl}#topup`)],
-      ]);
-    } else {
-      text = `Top up on web:\n${webLink(user.accessToken)}#topup`;
-      kb = mainInlineKeyboard(user.accessToken);
-    }
-    try {
-      await ctx.editMessageText(text, kb);
-    } catch {
-      await ctx.reply(text, kb);
-    }
+    const text = appUrl
+      ? "Top up on the dashboard:"
+      : `Top up: ${webLink(user.accessToken)}#topup`;
+    const kb = appUrl
+      ? Markup.inlineKeyboard([
+          [Markup.button.webApp("🌐 Open top-up", `${appUrl}#topup`)],
+        ])
+      : mainInlineKeyboard(user.accessToken);
+    await ctx.editMessageText(text, kb).catch(() => ctx.reply(text, kb));
   });
 
   bot.action("list", async (ctx) => {
@@ -1126,36 +982,25 @@ function createBot() {
     const extra = orders.length
       ? orderListKeyboard(orders)
       : mainInlineKeyboard(user.accessToken);
-    try {
-      await ctx.editMessageText(text, extra);
-    } catch {
-      await ctx.reply(text, extra);
-    }
+    await ctx.editMessageText(text, extra).catch(() => ctx.reply(text, extra));
   });
-
   bot.action("order_menu", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     await ctx.answerCbQuery();
     await showOrderMenu(ctx, user);
   });
-
   bot.action("domains", async (ctx) => {
     await ctx.answerCbQuery();
     await showDomains(ctx, 0);
   });
-
   bot.action(/^domains_page_(\d+)$/, async (ctx) => {
     await ctx.answerCbQuery();
-    const page = parseInt(ctx.match[1], 10);
-    await showDomains(ctx, page);
+    await showDomains(ctx, parseInt(ctx.match[1], 10));
   });
-
   bot.action(/^sms_services_page_(\d+)$/, async (ctx) => {
     await ctx.answerCbQuery();
-    const page = parseInt(ctx.match[1], 10);
-    await showSmsServices(ctx, page);
+    await showSmsServices(ctx, parseInt(ctx.match[1], 10));
   });
-
   bot.action("sms_services", async (ctx) => {
     await ctx.answerCbQuery();
     await showSmsServices(ctx, 0);
@@ -1166,24 +1011,24 @@ function createBot() {
     await ctx.answerCbQuery();
     await showSmsCountries(ctx, 0);
   });
-
   bot.action(/^sms_countries_page_(\d+)$/, async (ctx) => {
     await ctx.answerCbQuery();
-    const page = parseInt(ctx.match[1], 10);
-    await showSmsCountries(ctx, page);
+    await showSmsCountries(ctx, parseInt(ctx.match[1], 10));
   });
 
   bot.action(/^sms_country_(.+)$/, async (ctx) => {
-    const countryId = ctx.match[1];
+    const rawId = ctx.match[1];
+    const countryId = parseInt(rawId, 10);
     await ctx.answerCbQuery();
-    // Update the used country
-    config.smsActivateCountry = countryId;
-    config.smsActivateCountryId = countryId;
-    // Go back to SMS services list with new country
+    config.smsActivateCountryId = !isNaN(countryId) ? countryId : rawId;
+    config.smsActivateCountryName =
+      ctx.callbackQuery?.message?.reply_markup?.inline_keyboard
+        ?.flat()
+        .find((b) => b.callback_data === `sms_country_${rawId}`)?.text ||
+      String(countryId);
     await showSmsServices(ctx, 0);
   });
 
-  // ── SMS list command ───────────────────────────────────────────
   bot.command("smslist", async (ctx) => {
     try {
       const activations =
@@ -1193,11 +1038,11 @@ function createBot() {
         return;
       }
       const lines = ["📱 Active SMS activations:", ""];
-      activations.forEach((a) => {
+      activations.forEach((a) =>
         lines.push(
           `#${a.activationId} | ${a.service || "?"} | ${a.phoneNumber || "pending"} | ${a.status || "active"}`,
-        );
-      });
+        ),
+      );
       lines.push("", "Use /smsstatus <id> to check SMS code");
       await ctx.reply(lines.join("\n"));
     } catch (err) {
@@ -1205,7 +1050,6 @@ function createBot() {
     }
   });
 
-  // ── Countries command ──────────────────────────────────────────
   bot.command("countries", async (ctx) => {
     await showSmsCountries(ctx);
   });
@@ -1222,7 +1066,6 @@ function createBot() {
         serviceCode,
         config.smsActivateCountryId,
       );
-      // Calculate cost in gems
       const {
         fetchUsdMyrRate,
         gemsPerMyr,
@@ -1241,7 +1084,6 @@ function createBot() {
           `Not enough gems. Need ${costGems.toLocaleString()}, have ${balance.toLocaleString()}.`,
           mainInlineKeyboard(user.accessToken),
         );
-        // Cancel
         require("../services/smsActivate")
           .setStatus(activation.activationId, "8")
           .catch(() => {});
@@ -1295,9 +1137,7 @@ function createBot() {
           mainInlineKeyboard(getOrCreateTelegramUser(ctx.from.id).accessToken),
         );
       } else {
-        await ctx.answerCbQuery(
-          `Status: ${status.status} — try again in a few seconds`,
-        );
+        await ctx.answerCbQuery(`Status: ${status.status} — try again`);
       }
     } catch (err) {
       await ctx.answerCbQuery(`Error: ${err.message}`);
@@ -1326,7 +1166,6 @@ function createBot() {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const domainName = decodeURIComponent(ctx.match[1]);
     await ctx.answerCbQuery();
-
     try {
       const { site, domain } = await resolveOrderDomain(domainName);
       const { costGems } = await estimateOrderCost(domain);
@@ -1347,7 +1186,7 @@ function createBot() {
     } catch (err) {
       if (err.code === "INSUFFICIENT_GEMS") {
         await ctx.editMessageText(
-          `Not enough gems. Tap ➕ Top up.`,
+          "Not enough gems. Tap ➕ Top up.",
           mainInlineKeyboard(user.accessToken),
         );
         return;
@@ -1359,7 +1198,6 @@ function createBot() {
   bot.action("order_default", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     await ctx.answerCbQuery();
-
     try {
       const { site, domain } = await resolveOrderDomain(
         config.defaultDomain,
@@ -1379,7 +1217,7 @@ function createBot() {
     } catch (err) {
       if (err.code === "INSUFFICIENT_GEMS") {
         await ctx.editMessageText(
-          `Not enough gems. Tap ➕ Top up.`,
+          "Not enough gems. Tap ➕ Top up.",
           mainInlineKeyboard(user.accessToken),
         );
         return;
@@ -1392,13 +1230,11 @@ function createBot() {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const id = parseInt(ctx.match[1], 10);
     await ctx.answerCbQuery();
-
     const order = getOrderById(id, user.id);
     if (!order) {
       await ctx.editMessageText("Order not found.");
       return;
     }
-
     try {
       const remote = await getEmail(order.heroId);
       const updated = saveOrder(user.id, remote);
@@ -1418,13 +1254,11 @@ function createBot() {
     const user = getOrCreateTelegramUser(ctx.from.id);
     const id = parseInt(ctx.match[1], 10);
     await ctx.answerCbQuery();
-
     const order = getOrderById(id, user.id);
     if (!order) {
       await ctx.editMessageText("Order not found.");
       return;
     }
-
     try {
       await cancelOrderWithRefund(user.id, order);
       await ctx.editMessageText(
@@ -1436,53 +1270,42 @@ function createBot() {
     }
   });
 
-  // ── QR upload commands (admin only) ───────────────────────────
   bot.command("setqr_tng", async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
       await ctx.reply("Admin only.");
       return;
     }
     if (!ctx.message.reply_to_message?.photo) {
-      await ctx.reply(
-        "Reply to a photo with /setqr_tng to set the TnG QR code.",
-      );
+      await ctx.reply("Reply to a photo with /setqr_tng");
       return;
     }
     const fileId = ctx.message.reply_to_message.photo.pop().file_id;
-    const { getDb } = require("../db/database");
-    getDb()
+    require("../db/database")
+      .getDb()
       .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
       .run("qr_tng_file_id", fileId);
-    await ctx.reply(
-      "✅ TnG QR code saved! It will be shown to users on manual TnG payments.",
-    );
+    await ctx.reply("✅ TnG QR saved!");
   });
-
   bot.command("setqr_bank", async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
       await ctx.reply("Admin only.");
       return;
     }
     if (!ctx.message.reply_to_message?.photo) {
-      await ctx.reply(
-        "Reply to a photo with /setqr_bank to set the Bank QR code.",
-      );
+      await ctx.reply("Reply to a photo with /setqr_bank");
       return;
     }
     const fileId = ctx.message.reply_to_message.photo.pop().file_id;
-    const { getDb } = require("../db/database");
-    getDb()
+    require("../db/database")
+      .getDb()
       .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
       .run("qr_bank_file_id", fileId);
-    await ctx.reply(
-      "✅ Bank QR code saved! It will be shown to users on manual bank payments.",
-    );
+    await ctx.reply("✅ Bank QR saved!");
   });
 
   bot.on("pre_checkout_query", async (ctx) => {
     await ctx.answerPreCheckoutQuery(true);
   });
-
   bot.on("successful_payment", async (ctx) => {
     const user = getOrCreateTelegramUser(ctx.from.id);
     try {
@@ -1496,7 +1319,7 @@ function createBot() {
       );
     } catch (err) {
       await ctx.reply(
-        `Payment recorded but credit failed: ${err.message}. Contact support with payment ID.`,
+        `Payment recorded but credit failed: ${err.message}. Contact support.`,
       );
     }
   });
@@ -1504,13 +1327,11 @@ function createBot() {
   bot.catch((err) => {
     console.error("Telegram bot error:", err);
   });
-
   return bot;
 }
 
 async function launchBot(bot, app) {
   if (!bot) return;
-
   if (config.webappUrl) {
     try {
       await bot.telegram.setChatMenuButton({
@@ -1523,11 +1344,9 @@ async function launchBot(bot, app) {
       console.warn("Could not set menu button:", err.message);
     }
   }
-
   if (config.webappUrl && config.isProduction) {
     const webhookPath = "/telegram-webhook";
     const webhookUrlFull = `${config.webappUrl}${webhookPath}`;
-
     app.use(bot.webhookCallback(webhookPath));
     await bot.telegram.setWebhook(webhookUrlFull);
     console.log(`Telegram webhook set: ${webhookUrlFull}`);
