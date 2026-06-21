@@ -670,7 +670,7 @@ function createBot() {
     );
   });
 
-  bot.action(/^confirm_approve_(\d+)$/, async (ctx) => {
+  bot.action(/^confirm_approve_(\w+)$/, async (ctx) => {
     if (!isAdmin(ctx.from.id)) { await ctx.answerCbQuery("Admin only"); return; }
     const id = ctx.match[1];
     try {
@@ -678,7 +678,14 @@ function createBot() {
       const result = await adminApprovePayment(id);
       await ctx.editMessageText(`✅ Approved #${id}. Credited ${formatGems(result.gems)} gems.`);
       // Notify user
-      const payment = await ctx.db?.collection("payments")?.findOne({ _id: new ObjectId(String(id)) });
+      try {
+        const d = getDb();
+        const { ObjectId: OId } = require("mongodb");
+        const payment = await d.collection("payments").findOne({ _id: new OId(String(id)) });
+        if (payment?.user_id) {
+          try { await ctx.telegram.sendMessage(payment.user_id, `✅ Your payment #${id} (RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems) has been approved!`); } catch {}
+        }
+      } catch {}
       if (payment?.user_id) {
         try { await ctx.telegram.sendMessage(payment.user_id, `✅ Your payment #${id} (RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems) has been approved!`); } catch {}
       }
@@ -710,7 +717,7 @@ function createBot() {
     );
   });
 
-  bot.action(/^confirm_reject_(\d+)$/, async (ctx) => {
+  bot.action(/^confirm_reject_(\w+)$/, async (ctx) => {
     if (!isAdmin(ctx.from.id)) { await ctx.answerCbQuery("Admin only"); return; }
     const id = ctx.match[1];
     try {
@@ -740,7 +747,7 @@ function createBot() {
     );
   });
 
-  bot.action(/^confirm_revoke_(\d+)$/, async (ctx) => {
+  bot.action(/^confirm_revoke_(\w+)$/, async (ctx) => {
     if (!isAdmin(ctx.from.id)) { await ctx.answerCbQuery("Admin only"); return; }
     const id = ctx.match[1];
     try {
