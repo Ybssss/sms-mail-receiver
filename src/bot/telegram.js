@@ -849,52 +849,30 @@ function createBot() {
 
   // ── QR uploads (admin) ───────────────────────────────────────
   bot.command("setqr_tng", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) {
-      await ctx.reply("Admin only");
-      return;
-    }
-    if (!ctx.message.reply_to_message?.photo) {
-      await ctx.reply("Reply to a photo with /setqr_tng");
-      return;
-    }
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!ctx.message.reply_to_message?.photo) { await ctx.reply("Reply to a photo with /setqr_tng"); return; }
     await ctx.reply("Downloading QR image...");
     try {
       const fileId = ctx.message.reply_to_message.photo.pop().file_id;
       const fileUrl = await ctx.telegram.getFileLink(fileId);
-      // Save file_id for in-chat display
-      require("../db/database")
-        .getDb()
-        .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
-        .run("qr_tng_file_id", fileId);
-      // Download and save as public file
-      await saveQrImage(fileUrl, "qr-tng.png");
+      const d = getDb();
+      await d.collection("app_config").updateOne({ key: "qr_tng_file_id" }, { $set: { key: "qr_tng_file_id", value: fileId } }, { upsert: true });
+      await saveQrImage(fileUrl, "qr-tng.jpg");
       await ctx.reply("✅ TnG QR saved and available in web app!");
-    } catch (err) {
-      await ctx.reply(`Failed: ${err.message}`);
-    }
+    } catch (err) { await ctx.reply(`Failed: ${err.message}`); }
   });
   bot.command("setqr_bank", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) {
-      await ctx.reply("Admin only");
-      return;
-    }
-    if (!ctx.message.reply_to_message?.photo) {
-      await ctx.reply("Reply to a photo with /setqr_bank");
-      return;
-    }
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!ctx.message.reply_to_message?.photo) { await ctx.reply("Reply to a photo with /setqr_bank"); return; }
     await ctx.reply("Downloading QR image...");
     try {
       const fileId = ctx.message.reply_to_message.photo.pop().file_id;
       const fileUrl = await ctx.telegram.getFileLink(fileId);
-      require("../db/database")
-        .getDb()
-        .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
-        .run("qr_bank_file_id", fileId);
-      await saveQrImage(fileUrl, "qr-bank.png");
+      const d = getDb();
+      await d.collection("app_config").updateOne({ key: "qr_bank_file_id" }, { $set: { key: "qr_bank_file_id", value: fileId } }, { upsert: true });
+      await saveQrImage(fileUrl, "qr-bank.jpg");
       await ctx.reply("✅ Bank QR saved and available in web app!");
-    } catch (err) {
-      await ctx.reply(`Failed: ${err.message}`);
-    }
+    } catch (err) { await ctx.reply(`Failed: ${err.message}`); }
   });
 
   // ── Payments ─────────────────────────────────────────────────
@@ -935,21 +913,23 @@ async function saveQrImage(fileUrl, filename) {
       .get(fileUrl, (res) => {
         const chunks = [];
         res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          const buffer = Buffer.concat(chunks);
-          const b64 = buffer.toString("base64");
-          const dbKey =
-            filename === "qr-tng.png" ? "qr_tng_base64" : "qr_bank_base64";
-          getDb()
-            .prepare(
-              "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
-            )
-            .run(dbKey, b64);
-          // Also save to filesystem for static serving
-          const dir = path.join(__dirname, "..", "web", "public", "qr");
-          fs.mkdirSync(dir, { recursive: true });
-          fs.writeFileSync(path.join(dir, filename), buffer);
-          resolve();
+        res.on("end", async () => {
+          try {
+            const buffer = Buffer.concat(chunks);
+            const b64 = buffer.toString("base64");
+            const dbKey = filename.includes("tng") ? "qr_tng_base64" : "qr_bank_base64";
+            const d = getDb();
+            await d.collection("app_config").updateOne(
+              { key: dbKey },
+              { $set: { key: dbKey, value: b64 } },
+              { upsert: true }
+            );
+            // Also save to filesystem for static serving
+            const dir = path.join(__dirname, "..", "web", "public", "qr");
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(path.join(dir, filename), buffer);
+            resolve();
+          } catch (err) { reject(err); }
         });
         res.on("error", reject);
       })

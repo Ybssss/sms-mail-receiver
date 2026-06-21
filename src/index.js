@@ -11,7 +11,7 @@ async function main() {
   const { connectDb } = require('./db/database');
   await connectDb();
 
-  const app = createWebApp();
+  const app = await createWebApp();
   const bot = createBot();
   setBotInstance(bot);
 

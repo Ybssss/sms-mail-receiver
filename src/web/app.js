@@ -46,7 +46,7 @@ const { debitGems, getUserBalance } = require("../services/gems");
 const { validateInitData } = require("../services/telegramWebApp");
 const { getOrCreateTelegramUser } = require("../services/mailStore");
 
-function createWebApp() {
+async function createWebApp() {
   const app = express();
 
   // Trust Render's proxy (required for rate limiting behind reverse proxy)
@@ -790,22 +790,14 @@ function createWebApp() {
       return;
     }
     try {
-      const { getDb } = require("../db/database");
+      const db = getDb();
       const pending = await listPendingManualPayments();
-      const blocked = getDb()
-        .prepare(
-          "SELECT * FROM blocked_users ORDER BY blocked_at DESC LIMIT 20",
-        )
-        .all();
-      const totalUsers = getDb()
-        .prepare("SELECT COUNT(*) as c FROM users")
-        .get().c;
-      const totalOrders = getDb()
-        .prepare("SELECT COUNT(*) as c FROM email_orders")
-        .get().c;
-      const totalPayments = getDb()
-        .prepare("SELECT COUNT(*) as c FROM payments WHERE status = 'paid'")
-        .get().c;
+      const [blocked, totalUsers, totalOrders, totalPayments] = await Promise.all([
+        db.collection("blocked_users").find().sort({ blocked_at: -1 }).limit(20).toArray(),
+        db.collection("users").countDocuments(),
+        db.collection("email_orders").countDocuments(),
+        db.collection("payments").countDocuments({ status: "paid" }),
+      ]);
       let apiBalance = null;
       try {
         const {
@@ -837,9 +829,12 @@ function createWebApp() {
     const key = type === "tng" ? "qr_tng_base64" : "qr_bank_base64";
     const filename = type === "tng" ? "qr-tng.jpg" : "qr-bank.jpg";
     const { getDb } = require("../db/database");
-    getDb()
-      .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)")
-      .run(key, base64);
+    const d = getDb();
+    await d.collection("app_config").updateOne(
+      { key },
+      { $set: { key, value: base64 } },
+      { upsert: true }
+    );
     const fs = require("fs");
     const path = require("path");
     const dir = path.join(__dirname, "public", "qr");
