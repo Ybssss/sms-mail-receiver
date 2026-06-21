@@ -137,7 +137,19 @@ async function createWebApp() {
   // ── Body parsers ─────────────────────────────────────────────────────────
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: true }));
-  app.use(express.static(path.join(__dirname, "public")));
+  // Serve static files with aggressive no-cache headers so every
+  // reopen fetches fresh JS/CSS (no Ctrl+Shift+R needed)
+  app.use(
+    express.static(path.join(__dirname, "public"), {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".js") || filePath.endsWith(".css") || filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+        }
+      },
+    }),
+  );
 
   // ── Rate limiters ────────────────────────────────────────────────────────
   const generalLimiter = rateLimit({
