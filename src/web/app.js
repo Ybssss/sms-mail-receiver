@@ -381,7 +381,7 @@ function createWebApp() {
       }
       // Get ALL services (no country filter) then prices for the selected country
       const queryCountry = req.query.country || "";
-      const defaultCountryId = config.smsActivateCountryId || "153";
+      const defaultCountryId = config.smsActivateCountryId || "7";
       const countryId = queryCountry || defaultCountryId;
       const services = await getSmsServices(null); // No country filter = all services
       const prices = await getSmsPrices(null, countryId);
@@ -420,7 +420,7 @@ function createWebApp() {
   app.post("/api/sms/order", orderLimiter, async (req, res) => {
     try {
       const service = (req.body?.service || "").trim();
-      const country = (req.body?.country || "").trim() || config.smsActivateCountryId || "153";
+      const country = (req.body?.country || "").trim() || config.smsActivateCountryId || "7";
       if (!service) {
         res.status(400).json({ error: "service is required" });
         return;

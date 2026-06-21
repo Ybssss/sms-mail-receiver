@@ -214,10 +214,19 @@ async function getPrices(service, country) {
  */
 async function getCountries() {
   const result = await smsActivateRequest("getCountries");
-  // getCountries returns a plain array: [{ id: 2, rus: "...", eng: "Kazakhstan", ... }, ...]
+  // API returns object with numeric IDs as keys: {"1":{id:1,eng:"Ukraine",...}, "2":{...}}
+  if (typeof result === "object" && result !== null && !Array.isArray(result)) {
+    const list = Object.values(result);
+    console.log(
+      `[DEBUG] getCountries: ${list.length} countries from object, first:`,
+      list[0],
+    );
+    return list;
+  }
+  // Also handle array format
   if (Array.isArray(result)) {
     console.log(
-      `[DEBUG] getCountries: ${result.length} countries, first:`,
+      `[DEBUG] getCountries: ${result.length} countries from array, first:`,
       result[0],
     );
     return result;

@@ -70,7 +70,7 @@ const config = {
 
   // SMS Activation (SMS-Activate compatible API)
   smsActivateCountry: process.env.SMS_ACTIVATE_COUNTRY || "MY",
-  smsActivateCountryId: process.env.SMS_ACTIVATE_COUNTRY_ID || "153",
+  smsActivateCountryId: process.env.SMS_ACTIVATE_COUNTRY_ID || "7",
   smsActivateEnabled: process.env.SMS_ACTIVATE_ENABLED !== "false",
 
   adminTelegramIds: parseAdminIds(process.env.ADMIN_TELEGRAM_IDS),
