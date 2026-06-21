@@ -859,15 +859,25 @@ async function initSession() {
     return;
   }
 
-  // Third priority: saved token from sessionStorage
+  // Third priority: saved token from sessionStorage — validate it first
   const savedToken = (() => {
     try { return sessionStorage.getItem(STORAGE_KEY); } catch { return null; }
   })();
   if (savedToken) {
-    console.log("[SESSION] Using saved token from sessionStorage");
     setToken(savedToken);
-    tokenPanel.hidden = true;
-    return;
+    // Verify token is still valid
+    try {
+      console.log("[SESSION] Testing saved token...");
+      await api("/api/wallet");
+      console.log("[SESSION] Saved token is valid, using it");
+      tokenPanel.hidden = true;
+      return;
+    } catch (e) {
+      console.log("[SESSION] Saved token invalid:", e.message);
+      try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
+      token = "";
+      // Fall through to create new web session
+    }
   }
 
   // Last resort: create new web session

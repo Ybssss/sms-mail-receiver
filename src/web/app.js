@@ -231,13 +231,19 @@ async function createWebApp() {
 
       console.log("[AUTH] Validated Telegram user:", parsed.user.id, "first_name:", parsed.user.first_name,
         "language_code:", parsed.user.language_code || "none");
-      const user = await getOrCreateTelegramUser(parsed.user.id);
-      res.json({
-        token: user.accessToken,
-        source: "telegram",
-        telegramId: parsed.user.id,
-        firstName: parsed.user.first_name || null,
-      });
+      try {
+        const user = await getOrCreateTelegramUser(parsed.user.id);
+        console.log("[AUTH] User lookup done, token:", user.accessToken ? user.accessToken.substring(0, 8) + "..." : "NONE");
+        res.json({
+          token: user.accessToken,
+          source: "telegram",
+          telegramId: parsed.user.id,
+          firstName: parsed.user.first_name || null,
+        });
+      } catch (err) {
+        console.error("[AUTH] getOrCreateTelegramUser error:", err.message);
+        res.status(500).json({ error: "User creation failed: " + err.message });
+      }
     },
   );
 
@@ -288,7 +294,7 @@ async function createWebApp() {
 
   // ── Auth middleware for protected API routes ─────────────────────────────
   // Only checks Authorization header — no token from query params
-  app.use("/api", async (req, res, next) => {
+  app.use("/api", (req, res, next) => {
     // Skip public endpoints already handled above
     if (
       req.path === "/health" ||
@@ -309,14 +315,19 @@ async function createWebApp() {
       return;
     }
 
-    const user = await findUserByToken(token);
-    if (!user) {
-      res.status(401).json({ error: "Invalid access token" });
-      return;
-    }
-
-    req.user = user;
-    next();
+    findUserByToken(token)
+      .then((user) => {
+        if (!user) {
+          res.status(401).json({ error: "Invalid access token" });
+          return;
+        }
+        req.user = user;
+        next();
+      })
+      .catch((err) => {
+        console.error("[AUTH] Middleware findUserByToken error:", err.message);
+        res.status(500).json({ error: "Auth service unavailable" });
+      });
   });
 
   // ── Protected API routes ─────────────────────────────────────────────────
