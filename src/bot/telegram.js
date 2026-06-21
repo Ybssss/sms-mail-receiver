@@ -151,14 +151,16 @@ function replyKeyboard(token, userId) {
   return Markup.keyboard(rows).resize();
 }
 
-function findTokenForOrder(order) {
+async function findTokenForOrder(order) {
   const { getDb } = require("../db/database");
-  const row = getDb()
-    .prepare(
-      "SELECT u.access_token FROM users u JOIN email_orders e ON e.user_id = u.id WHERE e.id = ?",
-    )
-    .get(order.id);
-  return row?.access_token || "";
+  const d = getDb();
+  const { ObjectId } = require("mongodb");
+  let orderFilter;
+  try { orderFilter = { _id: new ObjectId(String(order.id)) }; } catch { orderFilter = { hero_id: order.heroId || order.id }; }
+  const eOrder = await d.collection("email_orders").findOne(orderFilter);
+  if (!eOrder) return "";
+  const userDoc = await d.collection("users").findOne({ _id: eOrder.user_id });
+  return userDoc?.access_token || "";
 }
 
 function formatMailAlert(order, source) {
