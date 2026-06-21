@@ -52,7 +52,7 @@ async function startManualTopup(userId, { provider, amountMyr }) {
   const gems = myrToGems(amountMyr, usdMyr);
   const info = getManualPaymentInfo(provider);
 
-  const payment = createPayment(userId, {
+  const payment = await createPayment(userId, {
     provider,
     amountMyr,
     gems,
@@ -64,6 +64,7 @@ async function startManualTopup(userId, { provider, amountMyr }) {
     ...info.details.map((d) => `  ${d}`),
     `  Reference: Payment #${payment.id}`,
     `  Amount: RM ${amountMyr.toFixed(2)}`,
+    `  Gems: ${gems.toLocaleString()}`,
     "",
     info.note,
   ];
