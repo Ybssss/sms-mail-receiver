@@ -374,9 +374,9 @@ function populateSmsDropdown(filter) {
   filtered.forEach((s) => {
     const opt = document.createElement("option");
     opt.value = s.code;
-    const priceText = s.costUsd ? `${fmt(s.costUsd)} gems` : "? gems";
+    const priceGems = s.costGems ? fmt(s.costGems) : "?";
     const stock = s.stock || "?";
-    opt.textContent = `${s.name} — ${priceText} (stock: ${stock})`;
+    opt.textContent = `${s.name} — ${priceGems} gems (stock: ${stock})`;
     smsServiceSelect.appendChild(opt);
   });
 
@@ -395,10 +395,10 @@ if (smsServiceSelect) {
     if (!selected || !smsSummary) return;
     const svc = smsServiceList.find(s => s.code === selected);
     if (svc) {
-      const priceText = svc.costUsd ? `${fmt(svc.costUsd)} gems` : "Unknown";
+      const priceGems = svc.costGems ? fmt(svc.costGems) : svc.costUsd ? `$${svc.costUsd.toFixed(2)}` : "?";
       const stock = svc.stock || "?";
       const countryName = smsCountrySelect?.selectedOptions[0]?.textContent || "selected country";
-      smsSummary.innerHTML = `<strong>${svc.name}</strong> — ${priceText} · ${stock} numbers · 🌍 ${countryName}`;
+      smsSummary.innerHTML = `<strong>${svc.name}</strong> — ${priceGems} gems · ${stock} numbers · 🌍 ${countryName}`;
       smsSummary.classList.remove("hidden");
     }
   });
@@ -415,8 +415,8 @@ if (smsSearchInput) {
         s.name.toLowerCase().includes(query) || s.code.toLowerCase().includes(query)
       );
       if (match && query.length >= 2) {
-        const priceText = match.costUsd ? `${fmt(match.costUsd)} gems` : "Unknown";
-        smsSummary.innerHTML = `<strong>Best match:</strong> ${match.name} — ${priceText} · stock: ${match.stock || "?"}`;
+        const priceGems = match.costGems ? fmt(match.costGems) : match.costUsd ? `$${match.costUsd.toFixed(2)}` : "?";
+        smsSummary.innerHTML = `<strong>Best match:</strong> ${match.name} — ${priceGems} gems · stock: ${match.stock || "?"}`;
         smsSummary.classList.remove("hidden");
       } else if (!smsServiceSelect.value) {
         smsSummary.classList.add("hidden");
