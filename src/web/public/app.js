@@ -756,27 +756,46 @@ function updateCustomTopupHint() {
 
 // ── Session ──────────────────────────────────────────────────────
 async function initSession() {
-  const inTelegram = initTelegramWebApp();
+  // First priority: URL token (from Telegram bot /web command or direct link)
+  const url = new URL(window.location.href);
+  const urlToken = url.searchParams.get("token");
+  if (urlToken) {
+    console.log("[SESSION] Using token from URL query parameter");
+    setToken(urlToken);
+    tokenPanel.hidden = true;
+    if (tokenInput) tokenInput.value = urlToken;
+    // Clean URL
+    url.searchParams.delete("token");
+    window.history.replaceState({}, "", url.toString());
+    return;
+  }
 
+  // Second priority: Telegram WebApp initData auth
+  const inTelegram = initTelegramWebApp();
   if (inTelegram && (await authFromTelegram())) {
     tokenInput.value = token;
     return;
   }
 
+  // Third priority: saved token from sessionStorage
   const savedToken = (() => {
     try { return sessionStorage.getItem(STORAGE_KEY); } catch { return null; }
   })();
-  const query = savedToken ? `?token=${encodeURIComponent(savedToken)}` : "";
+  if (savedToken) {
+    console.log("[SESSION] Using saved token from sessionStorage");
+    setToken(savedToken);
+    tokenPanel.hidden = true;
+    return;
+  }
 
+  // Last resort: create new web session
   try {
-    const session = await fetch(`/api/session${query}`).then(r => r.json());
+    console.log("[SESSION] Creating new web session");
+    const session = await fetch("/api/session").then(r => r.json());
     setToken(session.token);
     tokenInput.value = token;
-    if (savedToken) tokenPanel.hidden = true;
   } catch (e) {
-    console.error("Session init failed:", e.message);
-    liveStatus.textContent = "Failed to connect";
-    liveStatus.className = "status-pill error";
+    console.error("[SESSION] Failed to create web session:", e.message);
   }
 }
 
