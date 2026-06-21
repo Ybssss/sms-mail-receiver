@@ -914,12 +914,60 @@ async function runTopup(body) {
         lastPaymentId = result.paymentId;
         if (topupConfirmSection) topupConfirmSection.classList.remove("hidden");
       }
+      loadPaymentHistory().catch(() => {});
     } else {
       topupResult.textContent = result.note || "Payment created.";
     }
   } catch (err) {
     topupResult.textContent = err.message;
     console.error("Topup error:", err.message);
+  }
+}
+
+// ── Payment History ────────────────────────────────────────────
+async function loadPaymentHistory() {
+  const paymentHistory = $("payment-history");
+  const paymentHistoryList = $("payment-history-list");
+  if (!paymentHistory || !paymentHistoryList) return;
+  try {
+    const data = await api("/api/payments");
+    const payments = data.payments || [];
+    paymentHistoryList.innerHTML = "";
+    if (payments.length === 0) {
+      paymentHistory.classList.add("hidden");
+      return;
+    }
+    paymentHistory.classList.remove("hidden");
+    payments.forEach((p) => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border, #333);font-size:0.85rem;";
+      const providerLabel = p.provider === "manual_tng" ? "📱 TnG" : p.provider === "manual_bank" ? "🏦 Bank" : "💳 Billplz";
+      const statusColor = p.status === "paid" ? "#4ade80" : p.status === "cancelled" ? "#f87171" : "#fbbf24";
+      row.innerHTML = `<span>${providerLabel} · RM ${p.amountMyr} → ${p.gems?.toLocaleString?.() || p.gems} gems</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span style="color:${statusColor};font-weight:600;">${p.status.toUpperCase()}</span>
+          ${(p.status === "pending" || p.status === "pending_review") ? `<button class="btn-secondary" style="font-size:0.75rem;padding:2px 8px;" data-pid="${p.id}">Withdraw</button>` : ""}
+        </span>`;
+      paymentHistoryList.appendChild(row);
+      // Attach withdraw handler
+      const withdrawBtn = row.querySelector(`button[data-pid="${p.id}"]`);
+      if (withdrawBtn) {
+        withdrawBtn.addEventListener("click", async () => {
+          try {
+            await api("/api/cancel-payment", { method: "POST", body: JSON.stringify({ paymentId: p.id }) });
+            withdrawBtn.textContent = "Cancelled";
+            withdrawBtn.disabled = true;
+            setTimeout(() => loadPaymentHistory(), 2000);
+          } catch (err) {
+            console.error("Withdraw error:", err.message);
+            withdrawBtn.textContent = "Failed";
+            setTimeout(() => withdrawBtn.textContent = "Withdraw", 3000);
+          }
+        });
+      }
+    });
+  } catch (err) {
+    console.error("Payment history load error:", err.message);
   }
 }
 
@@ -1044,6 +1092,7 @@ function startAutoRefresh() {
     loadOrders().catch(() => { liveStatus.textContent = "Reconnecting…"; liveStatus.className = "status-pill error"; });
     loadWallet().catch(() => {});
     autoPollSmsCodes().catch(() => {});
+    loadPaymentHistory().catch(() => {});
   }, refreshMs);
 }
 

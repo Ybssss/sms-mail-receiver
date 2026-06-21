@@ -367,6 +367,26 @@ async function createWebApp() {
     }
   });
 
+  // Payment history
+  app.get("/api/payments", async (req, res) => {
+    try {
+      const { listPayments } = require("../services/payments/store");
+      const payments = await listPayments(req.user.id, { limit: 20 });
+      const mapped = payments.map((p) => ({
+        id: p.id,
+        provider: p.provider,
+        amountMyr: p.amountMyr,
+        gems: p.gems,
+        status: p.status,
+        createdAt: p.createdAt,
+        paidAt: p.paidAt,
+      }));
+      res.json({ payments: mapped });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/domains", async (_req, res) => {
     try {
       const domains = await getDomains();
