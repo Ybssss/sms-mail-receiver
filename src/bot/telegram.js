@@ -680,13 +680,30 @@ function createBot() {
       const text = `✅ Approved #${id}. Credited ${formatGems(result.gems)} gems.`;
       try { await ctx.editMessageText(text); }
       catch { try { await ctx.reply(text); } catch {} }
-      // Notify user
+      // Notify user — lookup telegram_id from users collection
       try {
         const d = getDb();
         const { ObjectId: OId } = require("mongodb");
         const payment = await d.collection("payments").findOne({ _id: new OId(String(id)) });
         if (payment?.user_id) {
-          try { await ctx.telegram.sendMessage(payment.user_id, `✅ Your payment #${id} (RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems) has been approved!`); } catch {}
+          const userDoc = await d.collection("users").findOne({ _id: typeof payment.user_id === "string" && payment.user_id.length === 24 ? new OId(payment.user_id) : payment.user_id });
+          const tgId = userDoc?.telegram_id;
+          if (tgId) {
+            try {
+              const balance = await getUserBalance(payment.user_id);
+              await ctx.telegram.sendMessage(tgId, `✅ Your payment #${id} has been approved!\n\n💰 RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems\n💎 New Balance: ${formatGems(balance)} gems`);
+            } catch (e) { console.error("Failed to notify user of approval:", e.message); }
+          }
+        }
+      } catch {}
+
+      // Also notify admin about the updated balance
+      try {
+        const d = getDb();
+        const payment = await d.collection("payments").findOne({ _id: new (require("mongodb").ObjectId)(String(id)) });
+        if (payment?.user_id) {
+          const balance = await getUserBalance(payment.user_id);
+          await ctx.reply(`💎 User balance is now: ${formatGems(balance)} gems`);
         }
       } catch {}
     } catch (err) {

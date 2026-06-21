@@ -128,12 +128,26 @@ async function handleTelegramSuccessfulPayment(userId, paymentData) {
 async function completePayment(paymentId, userId) {
   const payment = await getPaymentById(paymentId);
   if (!payment) throw new Error("Payment not found");
-  if (payment.status === "paid") return payment;
+  if (payment.status === "paid") {
+    console.log("[PAYMENT] completePayment: already paid", paymentId);
+    return payment;
+  }
 
+  console.log("[PAYMENT] completePayment: processing", { paymentId, userId: userId || payment.userId, gems: payment.gems });
   await updatePayment(paymentId, { status: "paid", paidAt: new Date().toISOString() });
-  await creditGems(userId || payment.userId, payment.gems, "topup", paymentId, `Payment #${paymentId}`);
 
-  return { ...payment, status: "paid" };
+  const targetUserId = userId || payment.userId;
+  try {
+    const result = await creditGems(targetUserId, payment.gems, "topup", paymentId, `Payment #${paymentId}`);
+    console.log("[PAYMENT] creditGems success: balance now", result.balance);
+  } catch (err) {
+    console.error("[PAYMENT] creditGems FAILED for", targetUserId, ":", err.message);
+    // Revert payment status so admin can retry
+    await updatePayment(paymentId, { status: "pending" });
+    throw new Error(`Credit failed (payment reset to pending): ${err.message}`);
+  }
+
+  return { ...payment, status: "paid", gems: payment.gems };
 }
 
 async function adminApprovePayment(paymentId) {
