@@ -902,13 +902,28 @@ refreshAdminBtn?.addEventListener("click", loadAdminPendingPayments);
 // ── Bootstrap ────────────────────────────────────────────────────
 console.log("[DEBUG] App starting, initializing session...");
 
-// Override loadWallet to also try loading admin panel
+// Override loadWallet to also try loading admin panel if user is admin
+let isUserAdmin = false;
 const origLoadWallet = loadWallet;
 loadWallet = async function () {
   const w = await api("/api/wallet");
   renderWallet(w);
-  loadAdminPendingPayments().catch(() => {});
+  if (isUserAdmin) loadAdminPendingPayments().catch(() => {});
 };
+
+// Check admin status on startup
+async function checkAdmin() {
+  try {
+    const result = await api("/api/admin/check");
+    isUserAdmin = result.isAdmin;
+    if (isUserAdmin && adminPanel) {
+      adminPanel.classList.remove("hidden");
+      loadAdminPendingPayments().catch(() => {});
+    }
+  } catch {
+    isUserAdmin = false;
+  }
+}
 
 // Setup proof upload button (safe to call before DOMContentLoaded)
 setupPaymentProof();
@@ -934,6 +949,7 @@ async function bootstrap() {
   }
 
   console.log("[DEBUG] Bootstrap: loadWallet + loadOrders...");
+  await checkAdmin();
   await loadWallet();
   await loadOrders();
   startAutoRefresh();

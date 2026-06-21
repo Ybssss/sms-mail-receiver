@@ -611,6 +611,12 @@ async function createWebApp() {
     return tid && config.adminTelegramIds.includes(String(tid));
   }
 
+  app.get("/api/admin/check", (req, res) => {
+    const tid = req.user?.telegramId;
+    const isAdmin = tid && config.adminTelegramIds.includes(String(tid));
+    res.json({ isAdmin });
+  });
+
   app.get("/api/admin/pending-payments", async (req, res) => {
     if (!isAdminUser(req)) {
       res.status(403).json({ error: "Admin only" });

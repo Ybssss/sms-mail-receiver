@@ -941,6 +941,53 @@ async function saveQrImage(fileUrl, filename) {
 
 async function launchBot(bot, app) {
   if (!bot) return;
+  
+  // Register commands for Telegram native / autocomplete
+  try {
+    // Default commands for all users
+    await bot.telegram.setMyCommands([
+      { command: "start", description: "Start the bot" },
+      { command: "balance", description: "Check gem balance" },
+      { command: "topup", description: "Top up gems" },
+      { command: "domains", description: "List available email domains" },
+      { command: "list", description: "View active orders" },
+      { command: "web", description: "Open web dashboard" },
+      { command: "help", description: "Show help" },
+      { command: "lang", description: "Switch language (en/zh)" },
+    ]);
+
+    // Admin commands — registered per-chat for each admin
+    for (const adminId of config.adminTelegramIds) {
+      await bot.telegram.setMyCommands([
+        { command: "start", description: "Start the bot" },
+        { command: "balance", description: "Check gem balance" },
+        { command: "topup", description: "Top up gems" },
+        { command: "domains", description: "List available email domains" },
+        { command: "list", description: "View active orders" },
+        { command: "web", description: "Open web dashboard" },
+        { command: "help", description: "Show help" },
+        { command: "lang", description: "Switch language (en/zh)" },
+        { command: "admin", description: "Admin dashboard overview" },
+        { command: "approve", description: "Approve or list pending payments" },
+        { command: "reject", description: "Reject a payment" },
+        { command: "revoke", description: "Revoke an approved payment" },
+        { command: "users", description: "List users" },
+        { command: "user", description: "User detail by Telegram ID" },
+        { command: "balanceapi", description: "Check Hero-SMS API balance" },
+        { command: "stats", description: "Quick stats" },
+        { command: "block", description: "Block a user" },
+        { command: "unblock", description: "Unblock a user" },
+        { command: "blocked", description: "List blocked users" },
+        { command: "reply", description: "Reply to a user" },
+        { command: "setqr_tng", description: "Set TnG QR (reply to photo)" },
+        { command: "setqr_bank", description: "Set Bank QR (reply to photo)" },
+      ], { scope: { type: "chat", chat_id: Number(adminId) } });
+    }
+    console.log("Telegram commands registered (admin + default scopes)");
+  } catch (e) {
+    console.error("Failed to register Telegram commands:", e.message);
+  }
+
   if (config.webappUrl) {
     try {
       await bot.telegram.setChatMenuButton({
