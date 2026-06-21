@@ -244,7 +244,7 @@ function createBot() {
 
   // ── Block check middleware ────────────────────────────────────
   bot.use(async (ctx, next) => {
-    if (ctx.from && isUserBlocked(ctx.from.id)) {
+    if (ctx.from && await isUserBlocked(ctx.from.id)) {
       try {
         await ctx.reply(t(getUserLang(ctx.from.id), "blocked"));
       } catch {}
