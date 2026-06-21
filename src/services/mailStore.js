@@ -53,52 +53,76 @@ async function mergeWebUserBalance(telegramId) {
   const d = getDb();
   try {
     const tgUser = await d.collection("users").findOne({ telegram_id: String(telegramId) });
-    if (!tgUser) return; // No telegram user yet — will merge after creation
-
+    if (!tgUser) return;
     const tgUserId = tgUser._id.toString();
-    const webUsers = await d.collection("users").find({
-      telegram_id: null,
-      gems_balance: { $gt: 0 },
-    }).toArray();
+
+    // Find web users (any with telegram_id: null)
+    const webUsers = await d.collection("users").find({ telegram_id: null }).toArray();
+    const now = new Date().toISOString();
+    let totalMerged = 0;
 
     for (const wu of webUsers) {
-      if (wu.gems_balance > 0) {
-        console.log(`[MERGE] Moving ${wu.gems_balance} gems from web user ${wu._id} to TG user ${telegramId}`);
-        const now = new Date().toISOString();
+      const wuId = wu._id.toString();
 
-        // Credit gems to Telegram user
-        await d.collection("users").updateOne(
-          { _id: tgUser._id },
-          { $inc: { gems_balance: wu.gems_balance } }
-        );
+      // Check if this web user has any PAID payments
+      const paidPayments = await d.collection("payments").find({
+        user_id: wuId,
+        status: "paid",
+      }).toArray();
 
-        // Get updated balance for transaction record
-        const updatedTg = await d.collection("users").findOne({ _id: tgUser._id });
-        await d.collection("gem_transactions").insertOne({
-          user_id: tgUserId,
-          amount: wu.gems_balance,
-          type: "merge",
-          ref_id: wu._id.toString(),
-          balance_after: updatedTg?.gems_balance || 0,
-          note: `Merged from web user #${wu._id.toString().slice(-6)}`,
-          created_at: now,
-        });
-
-        // Zero out web user
-        await d.collection("users").updateOne(
-          { _id: wu._id },
-          { $set: { gems_balance: 0 } }
-        );
-
-        // Reassign payments to Telegram user
-        await d.collection("payments").updateMany(
-          { user_id: wu._id.toString() },
-          { $set: { user_id: tgUserId } }
-        );
+      if (paidPayments.length === 0 && (wu.gems_balance || 0) <= 0) {
+        continue; // Nothing to merge
       }
+
+      // Calculate total gems: from balance + from paid payments
+      let gemsToCredit = wu.gems_balance || 0;
+
+      for (const pp of paidPayments) {
+        gemsToCredit += pp.gems || 0;
+      }
+
+      if (gemsToCredit <= 0) continue;
+
+      console.log(`[MERGE] Moving ${gemsToCredit} gems from web user ${wuId} to TG user ${telegramId} (balance: ${wu.gems_balance || 0}, payments: ${paidPayments.length})`);
+
+      // Credit gems to Telegram user
+      await d.collection("users").updateOne(
+        { _id: tgUser._id },
+        { $inc: { gems_balance: gemsToCredit } }
+      );
+
+      // Record transaction
+      const updatedTg = await d.collection("users").findOne({ _id: tgUser._id });
+      await d.collection("gem_transactions").insertOne({
+        user_id: tgUserId,
+        amount: gemsToCredit,
+        type: "merge",
+        ref_id: wuId,
+        balance_after: updatedTg?.gems_balance || 0,
+        note: `Merged ${paidPayments.length} paid payments + balance from web user #${wuId.slice(-6)}`,
+        created_at: now,
+      });
+
+      // Zero the web user
+      await d.collection("users").updateOne(
+        { _id: wu._id },
+        { $set: { gems_balance: 0 } }
+      );
+
+      // Reassign all payments (paid, pending, cancelled) to Telegram user
+      await d.collection("payments").updateMany(
+        { user_id: wuId },
+        { $set: { user_id: tgUserId } }
+      );
+
+      totalMerged += gemsToCredit;
+    }
+
+    if (totalMerged > 0) {
+      console.log(`[MERGE] Total merged: ${totalMerged} gems for TG user ${telegramId}`);
     }
   } catch (e) {
-    console.error("[MERGE] Failed to merge web users:", e.message);
+    console.error("[MERGE] Failed to merge web users:", e.message, e.stack);
   }
 }
 
