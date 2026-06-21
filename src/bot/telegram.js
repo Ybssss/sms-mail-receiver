@@ -255,7 +255,7 @@ function createBot() {
 
   // ── Start ────────────────────────────────────────────────────
   bot.start(async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const lang = getUserLang(user.telegramId);
     const name = ctx.from?.first_name || "there";
     const appUrl = webAppUrl(user.accessToken);
@@ -283,20 +283,20 @@ function createBot() {
 
   // ── Balance ──────────────────────────────────────────────────
   bot.hears(/^(💎 Balance|💎 余额)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const lang = getUserLang(user.telegramId);
     const text = await formatBalance(user.id, lang);
     await ctx.reply(text, replyKeyboard(user.accessToken, user.telegramId));
   });
   bot.command("balance", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const text = await formatBalance(user.id, getUserLang(user.telegramId));
     await ctx.reply(text);
   });
 
   // ── Top up ───────────────────────────────────────────────────
   bot.hears(/^(➕ Top up|➕ 充值)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const lang = getUserLang(user.telegramId);
     const wallet = await getWalletInfo(user.id);
     const text = t(
@@ -310,7 +310,7 @@ function createBot() {
 
   // ── Order ────────────────────────────────────────────────────
   bot.hears(/^(🛒 Order|🛒 下单)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const lang = getUserLang(user.telegramId);
     const appUrl = webAppUrl(user.accessToken);
     const text = t(lang, "orderEmail") + "\n\n" + t(lang, "orderSms");
@@ -331,7 +331,7 @@ function createBot() {
 
   // ── Active mail ──────────────────────────────────────────────
   bot.hears(/^(📬 Active mail|📬 活跃邮件)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const lang = getUserLang(user.telegramId);
     const orders = listOrders(user.id, { limit: 20 });
     await ctx.reply(
@@ -340,7 +340,7 @@ function createBot() {
     );
   });
   bot.command("list", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const orders = listOrders(user.id, { limit: 20 });
     await ctx.reply(t(getUserLang(user.telegramId), "orders", orders));
   });
@@ -374,7 +374,7 @@ function createBot() {
 
   // ── Web app ──────────────────────────────────────────────────
   bot.hears(/^(🌐 Open App|🌐 打开应用)$/, async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const appUrl = webAppUrl(user.accessToken);
     if (appUrl) {
       await ctx.reply(
@@ -388,7 +388,7 @@ function createBot() {
     }
   });
   bot.command("web", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const appUrl = webAppUrl(user.accessToken);
     if (appUrl) {
       await ctx.reply(
@@ -787,6 +787,7 @@ function createBot() {
   });
 
   bot.command("webhook", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
     const url = config.webappUrl
       ? `${config.webappUrl}/webhook/hero-sms`
       : "Not configured";
@@ -794,6 +795,7 @@ function createBot() {
   });
 
   bot.command("countries", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
     try {
       const countries = await getSmsCountries();
       if (!Array.isArray(countries) || !countries.length) {
@@ -824,7 +826,7 @@ function createBot() {
   });
 
   bot.command("topup", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const wallet = await getWalletInfo(user.id);
     await ctx.reply(
       t(
@@ -837,7 +839,7 @@ function createBot() {
   });
 
   bot.command("order", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const parts = ctx.message.text
       .replace(/^\/order\s*/i, "")
       .trim()
@@ -865,7 +867,7 @@ function createBot() {
   });
 
   bot.command("cancel", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     const id = parseInt(ctx.message.text.replace(/^\/cancel\s*/i, ""), 10);
     if (!id) {
       await ctx.reply("Usage: /cancel 1");
@@ -917,7 +919,7 @@ function createBot() {
     await ctx.answerPreCheckoutQuery(true);
   });
   bot.on("successful_payment", async (ctx) => {
-    const user = getOrCreateTelegramUser(ctx.from.id);
+    const user = await getOrCreateTelegramUser(ctx.from.id);
     try {
       const result = await handleTelegramSuccessfulPayment(
         user.id,

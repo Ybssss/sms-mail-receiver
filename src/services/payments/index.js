@@ -133,10 +133,20 @@ async function completePayment(paymentId, userId) {
     return payment;
   }
 
-  console.log("[PAYMENT] completePayment: processing", { paymentId, userId: userId || payment.userId, gems: payment.gems });
-  await updatePayment(paymentId, { status: "paid", paidAt: new Date().toISOString() });
-
   const targetUserId = userId || payment.userId;
+  console.log("[PAYMENT] completePayment:", JSON.stringify({ paymentId, targetUserId, paymentUserId: payment.userId, gems: payment.gems }));
+
+  // Diagnostic: check which user this payment targets
+  try {
+    const { getDb } = require("../../db/database");
+    const { ObjectId } = require("mongodb");
+    const db = getDb();
+    const lookupFilter = ObjectId.isValid(targetUserId) ? { _id: new ObjectId(targetUserId) } : { _id: targetUserId };
+    const targetUser = await db.collection("users").findOne(lookupFilter);
+    console.log("[PAYMENT] Target user in DB:", targetUser ? JSON.stringify({ _id: targetUser._id?.toString?.(), telegram_id: targetUser.telegram_id, gems_balance: targetUser.gems_balance, access_token: targetUser.access_token ? 'set' : 'null' }) : "NOT FOUND");
+  } catch (e) { console.log("[PAYMENT] Diagnostic error:", e.message); }
+
+  await updatePayment(paymentId, { status: "paid", paidAt: new Date().toISOString() });
   try {
     const result = await creditGems(targetUserId, payment.gems, "topup", paymentId, `Payment #${paymentId}`);
     console.log("[PAYMENT] creditGems success: balance now", result.balance);

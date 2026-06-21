@@ -140,7 +140,7 @@ function fmtSeconds(ms) {
 
 function setToken(nextToken) {
   token = nextToken;
-  try { sessionStorage.setItem(STORAGE_KEY, token); } catch {}
+  try { localStorage.setItem(STORAGE_KEY, token); } catch {}
   if (tokenPanel) tokenPanel.hidden = Boolean(token);
 }
 
@@ -1053,9 +1053,9 @@ async function initSession() {
     return;
   }
 
-  // Third priority: saved token from sessionStorage — validate it first
+  // Third priority: saved token from localStorage — validate it first
   const savedToken = (() => {
-    try { return sessionStorage.getItem(STORAGE_KEY); } catch { return null; }
+    try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
   })();
   if (savedToken) {
     setToken(savedToken);
@@ -1068,7 +1068,7 @@ async function initSession() {
       return;
     } catch (e) {
       console.log("[SESSION] Saved token invalid:", e.message);
-      try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
+      try { localStorage.removeItem(STORAGE_KEY); } catch {}
       token = "";
       // Fall through to create new web session
     }
@@ -1117,7 +1117,7 @@ tokenSave?.addEventListener("click", async () => {
   if (!value) return;
   setToken(value);
   try { await loadWallet(); await loadOrders(); startAutoRefresh(); } catch {
-    try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
     liveStatus.textContent = "Invalid token";
     liveStatus.className = "status-pill error";
   }

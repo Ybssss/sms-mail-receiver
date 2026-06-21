@@ -53,69 +53,77 @@ async function mergeWebUserBalance(telegramId) {
   const d = getDb();
   try {
     const tgUser = await d.collection("users").findOne({ telegram_id: String(telegramId) });
-    if (!tgUser) return;
+    if (!tgUser) {
+      console.log("[MERGE] No TG user found for telegram_id:", telegramId);
+      return;
+    }
     const tgUserId = tgUser._id.toString();
+    console.log("[MERGE] Starting merge for TG user:", { tgUserId, telegramId, tgBalance: tgUser.gems_balance });
 
     // Find web users (any with telegram_id: null)
     const webUsers = await d.collection("users").find({ telegram_id: null }).toArray();
+    console.log("[MERGE] Found", webUsers.length, "web users (telegram_id: null)");
     const now = new Date().toISOString();
     let totalMerged = 0;
 
     for (const wu of webUsers) {
       const wuId = wu._id.toString();
 
-      // Check if this web user has any PAID payments
-      const paidPayments = await d.collection("payments").find({
+      // Always reassign ALL payments from this web user to the Telegram user,
+      // even if there's nothing to credit yet (handles pending payments that
+      // will be approved later).
+      const allPayments = await d.collection("payments").find({
         user_id: wuId,
-        status: "paid",
       }).toArray();
 
-      if (paidPayments.length === 0 && (wu.gems_balance || 0) <= 0) {
-        continue; // Nothing to merge
+      if (allPayments.length > 0 || (wu.gems_balance || 0) > 0) {
+        // Reassign all payments (paid, pending, cancelled) to Telegram user
+        await d.collection("payments").updateMany(
+          { user_id: wuId },
+          { $set: { user_id: tgUserId } }
+        );
+
+        // Calculate gems to credit: the current balance already reflects
+        // gems credited from any paid payments, so we only need the balance.
+        const gemsToCredit = wu.gems_balance || 0;
+
+        if (gemsToCredit > 0) {
+          const paidCount = allPayments.filter(p => p.status === "paid").length;
+          console.log(`[MERGE] Moving ${gemsToCredit} gems from web user ${wuId} to TG user ${telegramId} (balance: ${gemsToCredit}, paid payments: ${paidCount}, total payments: ${allPayments.length})`);
+
+          // Credit gems to Telegram user
+          await d.collection("users").updateOne(
+            { _id: tgUser._id },
+            { $inc: { gems_balance: gemsToCredit } }
+          );
+
+          // Record transaction
+          const updatedTg = await d.collection("users").findOne({ _id: tgUser._id });
+          await d.collection("gem_transactions").insertOne({
+            user_id: tgUserId,
+            amount: gemsToCredit,
+            type: "merge",
+            ref_id: wuId,
+            balance_after: updatedTg?.gems_balance || 0,
+            note: `Merged ${paidCount} paid payments + balance from web user #${wuId.slice(-6)}`,
+            created_at: now,
+          });
+        } else {
+          console.log(`[MERGE] Reassigning ${allPayments.length} pending payment(s) from web user ${wuId} to TG user ${telegramId} (no paid payments to credit yet)`);
+        }
+
+        // Zero the web user's balance. Keep the access_token valid so
+        // existing sessionStorage tokens don't break on refresh — the
+        // user will see 0 balance until they re-auth via Telegram, at
+        // which point they'll receive the TG user's token with the
+        // correct balance.
+        await d.collection("users").updateOne(
+          { _id: wu._id },
+          { $set: { gems_balance: 0 } }
+        );
+
+        totalMerged += gemsToCredit;
       }
-
-      // Calculate total gems: from balance + from paid payments
-      let gemsToCredit = wu.gems_balance || 0;
-
-      for (const pp of paidPayments) {
-        gemsToCredit += pp.gems || 0;
-      }
-
-      if (gemsToCredit <= 0) continue;
-
-      console.log(`[MERGE] Moving ${gemsToCredit} gems from web user ${wuId} to TG user ${telegramId} (balance: ${wu.gems_balance || 0}, payments: ${paidPayments.length})`);
-
-      // Credit gems to Telegram user
-      await d.collection("users").updateOne(
-        { _id: tgUser._id },
-        { $inc: { gems_balance: gemsToCredit } }
-      );
-
-      // Record transaction
-      const updatedTg = await d.collection("users").findOne({ _id: tgUser._id });
-      await d.collection("gem_transactions").insertOne({
-        user_id: tgUserId,
-        amount: gemsToCredit,
-        type: "merge",
-        ref_id: wuId,
-        balance_after: updatedTg?.gems_balance || 0,
-        note: `Merged ${paidPayments.length} paid payments + balance from web user #${wuId.slice(-6)}`,
-        created_at: now,
-      });
-
-      // Zero the web user
-      await d.collection("users").updateOne(
-        { _id: wu._id },
-        { $set: { gems_balance: 0 } }
-      );
-
-      // Reassign all payments (paid, pending, cancelled) to Telegram user
-      await d.collection("payments").updateMany(
-        { user_id: wuId },
-        { $set: { user_id: tgUserId } }
-      );
-
-      totalMerged += gemsToCredit;
     }
 
     if (totalMerged > 0) {

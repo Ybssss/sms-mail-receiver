@@ -5,7 +5,8 @@ async function getUserBalance(userId) {
   const { ObjectId } = require("mongodb");
   const uid = typeof userId === "string" ? userId : userId?.toString?.();
   const filter = uid?.length === 24 ? { _id: new ObjectId(uid) } : { _id: uid };
-  const user = await d.collection("users").findOne(filter, { projection: { gems_balance: 1 } });
+  const user = await d.collection("users").findOne(filter, { projection: { gems_balance: 1, telegram_id: 1 } });
+  console.log("[GEMS] getUserBalance:", JSON.stringify({ userId: uid, userFound: !!user, balance: user?.gems_balance, telegramId: user?.telegram_id }));
   return user?.gems_balance ?? 0;
 }
 
@@ -30,12 +31,15 @@ async function creditGems(userId, amount, type, refId, note) {
   const filter = getObjectIdFilter(userId);
   const user = await d.collection("users").findOne(filter);
 
+  console.log("[GEMS] creditGems:", { userId, amount, filter, userFound: !!user, telegramId: user?.telegram_id, oldBalance: user?.gems_balance });
+
   if (!user) throw new Error("User not found");
 
   const newBalance = (user.gems_balance || 0) + amount;
   const now = new Date().toISOString();
 
   await d.collection("users").updateOne(filter, { $set: { gems_balance: newBalance } });
+  console.log("[GEMS] creditGems updated:", { userId, newBalance, telegramId: user.telegram_id });
   await d.collection("gem_transactions").insertOne({
     user_id: userId,
     amount,
