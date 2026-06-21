@@ -538,6 +538,91 @@ async function checkSmsCode(activationId) {
   }
 }
 
+// Check code on a specific card and update it in-place
+async function checkSmsCodeOnCard(card, activationId) {
+  if (!card || !activationId) return;
+  try {
+    const status = await api(`/api/sms/status/${activationId}`);
+    if (status.status === "OK" && status.smsCode) {
+      // Update the card to show received code
+      card.classList.add("received");
+      const statusEl = card.querySelector(".order-status");
+      if (statusEl) {
+        statusEl.classList.add("received");
+        statusEl.textContent = "CODE RECEIVED";
+      }
+      // Add code display with copy button
+      const existingCode = card.querySelector(".order-value");
+      if (!existingCode) {
+        const codeRow = document.createElement("div");
+        codeRow.className = "order-value";
+        codeRow.style.display = "flex";
+        codeRow.style.alignItems = "center";
+        codeRow.style.gap = "8px";
+        
+        const codeText = document.createElement("span");
+        codeText.textContent = `📨 Code: ${status.smsCode}`;
+        codeText.style.flex = "1";
+        
+        const copyCodeBtn = document.createElement("button");
+        copyCodeBtn.type = "button";
+        copyCodeBtn.className = "btn-secondary";
+        copyCodeBtn.textContent = "📋 Copy";
+        copyCodeBtn.style.padding = "4px 10px";
+        copyCodeBtn.style.fontSize = "0.8rem";
+        copyCodeBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          navigator.clipboard.writeText(status.smsCode).then(() => {
+            copyCodeBtn.textContent = "✅ Copied";
+            setTimeout(() => { copyCodeBtn.textContent = "📋 Copy"; }, 1500);
+          }).catch(() => {});
+        });
+        
+        codeRow.append(codeText, copyCodeBtn);
+        card.appendChild(codeRow);
+      }
+      // Remove "Check Code" button since code is received
+      const actions = card.querySelector(".order-actions");
+      if (actions) actions.remove();
+    } else {
+      // Show waiting status flash on the card
+      const statusEl = card.querySelector(".order-status");
+      if (statusEl) {
+        statusEl.textContent = status.status || "WAITING";
+        setTimeout(() => {
+          if (statusEl.textContent !== "CODE RECEIVED") {
+            statusEl.textContent = "WAIT_CODE";
+          }
+        }, 2000);
+      }
+      // Show any SMS text if available
+      if (status.messages?.length) {
+        const msgEl = document.createElement("div");
+        msgEl.className = "order-meta";
+        msgEl.textContent = status.messages.map(m => m.text || m.code).filter(Boolean).join(" · ") || "Waiting...";
+        const existingMsg = card.querySelector(".check-msg");
+        if (existingMsg) existingMsg.remove();
+        msgEl.className += " check-msg";
+        card.appendChild(msgEl);
+        setTimeout(() => { if (msgEl.parentNode) msgEl.remove(); }, 10000);
+      }
+    }
+  } catch (err) {
+    console.error("checkSmsCodeOnCard error:", err.message);
+  }
+}
+
+// Auto-poll SMS activations for codes (runs every refresh cycle)
+async function autoPollSmsCodes() {
+  const cards = ordersList.querySelectorAll(".order-card[data-activation-id]:not(.received)");
+  for (const card of cards) {
+    const activationId = card.dataset.activationId;
+    if (activationId) {
+      checkSmsCodeOnCard(card, activationId).catch(() => {});
+    }
+  }
+}
+
 // ── Orders ───────────────────────────────────────────────────────
 function renderOrders(orders, smsActivations = []) {
   ordersList.innerHTML = "";
@@ -592,26 +677,54 @@ function renderOrders(orders, smsActivations = []) {
   // Render SMS activations
   smsActivations.forEach((a) => {
     const card = document.createElement("article");
-    card.className = "order-card";
+    card.className = `order-card${a.smsCode ? " received" : ""}`;
+    card.dataset.activationId = a.activationId;
 
     const top = document.createElement("div");
     top.className = "order-top";
-    const label = document.createElement("div");
-    label.className = "order-email";
-    label.textContent = a.phoneNumber || "N/A";
-    const status = document.createElement("span");
-    status.className = "order-status";
-    status.textContent = a.smsCode ? "RECEIVED" : (a.status || "WAIT_CODE");
-    top.append(label, status);
 
+    // Phone number with click-to-copy
+    const phoneEl = document.createElement("div");
+    phoneEl.className = "order-email copyable";
+    phoneEl.textContent = a.phoneNumber || "N/A";
+    phoneEl.title = "Click to copy phone number";
+    phoneEl.style.cursor = "pointer";
+    phoneEl.addEventListener("click", () => {
+      const phone = a.phoneNumber || "";
+      if (!phone) return;
+      navigator.clipboard.writeText(phone).then(() => {
+        const orig = phoneEl.textContent;
+        phoneEl.textContent = "📋 Copied!";
+        setTimeout(() => { phoneEl.textContent = orig; }, 1500);
+      }).catch(() => {
+        // Fallback for non-HTTPS
+        const ta = document.createElement("textarea");
+        ta.value = phone;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        const orig = phoneEl.textContent;
+        phoneEl.textContent = "📋 Copied!";
+        setTimeout(() => { phoneEl.textContent = orig; }, 1500);
+      });
+    });
+
+    const status = document.createElement("span");
+    status.className = `order-status${a.smsCode ? " received" : ""}`;
+    status.textContent = a.smsCode ? "CODE RECEIVED" : (a.status || "WAIT_CODE");
+    top.append(phoneEl, status);
+
+    // Service & cost line
     const meta = document.createElement("div");
     meta.className = "order-meta";
     meta.textContent = `📱 SMS · ${a.serviceName || a.service} · ${fmt(a.costGems)} gems`;
     card.append(top, meta);
 
+    // Timer
     if (a.activationTime) {
       const timer = document.createElement("div");
-      timer.className = "order-meta";
+      timer.className = "order-meta timer-line";
       const endTime = new Date(a.activationTime).getTime();
       const updateTimer = () => {
         const remaining = Math.max(0, endTime - Date.now());
@@ -636,15 +749,48 @@ function renderOrders(orders, smsActivations = []) {
       card.appendChild(meta2);
     }
 
-    const actions = document.createElement("div");
-    actions.className = "order-actions";
-    const checkBtn = document.createElement("button");
-    checkBtn.type = "button";
-    checkBtn.className = "btn-secondary";
-    checkBtn.textContent = "🔄 Check Code";
-    checkBtn.addEventListener("click", () => checkSmsCode(a.activationId));
-    actions.appendChild(checkBtn);
-    card.appendChild(actions);
+    // Show received code with copy button
+    if (a.smsCode) {
+      const codeRow = document.createElement("div");
+      codeRow.className = "order-value";
+      codeRow.style.display = "flex";
+      codeRow.style.alignItems = "center";
+      codeRow.style.gap = "8px";
+      
+      const codeText = document.createElement("span");
+      codeText.textContent = `📨 Code: ${a.smsCode}`;
+      codeText.style.flex = "1";
+      
+      const copyCodeBtn = document.createElement("button");
+      copyCodeBtn.type = "button";
+      copyCodeBtn.className = "btn-secondary";
+      copyCodeBtn.textContent = "📋 Copy";
+      copyCodeBtn.style.padding = "4px 10px";
+      copyCodeBtn.style.fontSize = "0.8rem";
+      copyCodeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(a.smsCode).then(() => {
+          copyCodeBtn.textContent = "✅ Copied";
+          setTimeout(() => { copyCodeBtn.textContent = "📋 Copy"; }, 1500);
+        }).catch(() => {});
+      });
+      
+      codeRow.append(codeText, copyCodeBtn);
+      card.appendChild(codeRow);
+    }
+
+    // Actions
+    if (!a.smsCode) {
+      const actions = document.createElement("div");
+      actions.className = "order-actions";
+      const checkBtn = document.createElement("button");
+      checkBtn.type = "button";
+      checkBtn.className = "btn-secondary";
+      checkBtn.textContent = "🔄 Check Code";
+      checkBtn.addEventListener("click", () => checkSmsCodeOnCard(card, a.activationId));
+      actions.appendChild(checkBtn);
+      card.appendChild(actions);
+    }
 
     ordersList.appendChild(card);
   });
@@ -897,6 +1043,7 @@ function startAutoRefresh() {
     if (!token) return;
     loadOrders().catch(() => { liveStatus.textContent = "Reconnecting…"; liveStatus.className = "status-pill error"; });
     loadWallet().catch(() => {});
+    autoPollSmsCodes().catch(() => {});
   }, refreshMs);
 }
 

@@ -552,6 +552,26 @@ async function createWebApp() {
       const activationId = req.params.id;
       const statusResult = await getSmsStatus(activationId);
       const messages = await getAllSmsMessages(activationId);
+
+      // Persist received code to DB so it survives page refreshes
+      if (statusResult.status === "OK" && statusResult.smsCode) {
+        try {
+          const db = getDb();
+          await db.collection("sms_activations").updateOne(
+            { activation_id: activationId },
+            {
+              $set: {
+                status: "OK",
+                sms_code: statusResult.smsCode,
+                updated_at: new Date().toISOString(),
+              },
+            },
+          );
+        } catch (e) {
+          console.error("[SMS] Failed to persist received code:", e.message);
+        }
+      }
+
       res.json({ ...statusResult, messages });
     } catch (err) {
       res.status(502).json({ error: err.message });
