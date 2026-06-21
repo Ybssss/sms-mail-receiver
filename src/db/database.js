@@ -21,7 +21,7 @@ async function connectDb() {
 
   // Create indexes
   await Promise.all([
-    db.collection("users").createIndex({ telegram_id: 1 }, { unique: true, sparse: true }),
+    db.collection("users").createIndex({ telegram_id: 1 }),
     db.collection("users").createIndex({ access_token: 1 }, { unique: true }),
     db.collection("email_orders").createIndex({ user_id: 1 }),
     db.collection("email_orders").createIndex({ hero_id: 1 }, { unique: true }),
