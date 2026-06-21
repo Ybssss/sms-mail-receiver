@@ -112,14 +112,11 @@ async function mergeWebUserBalance(telegramId) {
           console.log(`[MERGE] Reassigning ${allPayments.length} pending payment(s) from web user ${wuId} to TG user ${telegramId} (no paid payments to credit yet)`);
         }
 
-        // Zero the web user's balance. Keep the access_token valid so
-        // existing sessionStorage tokens don't break on refresh — the
-        // user will see 0 balance until they re-auth via Telegram, at
-        // which point they'll receive the TG user's token with the
-        // correct balance.
+        // Zero the web user's balance AND copy the Telegram user's token
+        // so the web app's saved token works across sessions.
         await d.collection("users").updateOne(
           { _id: wu._id },
-          { $set: { gems_balance: 0 } }
+          { $set: { gems_balance: 0, access_token: tgUser.access_token } }
         );
 
         totalMerged += gemsToCredit;
@@ -141,6 +138,9 @@ async function getOrCreateWebUser(token) {
     if (user) return user;
   }
 
+  // Check if there's already a Telegram user for this device (e.g. from sessionStorage)
+  // This prevents creating a web user when the user already has a TG user.
+  // We can't reliably detect this here, but the merge will catch it.
   const newToken = generateToken();
   const now = new Date().toISOString();
   const result = await d.collection("users").insertOne({
