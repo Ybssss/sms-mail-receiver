@@ -618,30 +618,34 @@ async function loadConfig() {
 }
 
 async function loadServices() {
-  // Email domains (uses api with token)
-  try {
-    const data = await api("/api/domains");
-    renderServices(data.domains);
-  } catch (err) {
-    serviceSelect.innerHTML = '<option value="">Error loading services</option>';
-    if (serviceError) { serviceError.textContent = "Failed to load services: " + err.message; serviceError.classList.remove("hidden"); }
+  // Each service loads independently — one failure won't block others
+  const results = await Promise.allSettled([
+    // Email domains (requires auth)
+    (async () => {
+      const data = await api("/api/domains");
+      renderServices(data.domains);
+    })(),
+    // SMS countries (public, no auth needed)  
+    (async () => {
+      const cData = await fetch("/api/sms-countries").then(r => r.json());
+      renderSmsCountries(cData.countries);
+    })(),
+  ]);
+
+  // Handle failures gracefully
+  if (results[0].status === "rejected") {
+    serviceSelect.innerHTML = '<option value="">Services unavailable</option>';
     if (orderCostHint) orderCostHint.textContent = "Could not load services. Check Hero-SMS API key.";
-    console.error("loadServices email domains error:", err.message);
+    console.error("loadServices email domains error:", results[0].reason?.message);
   }
-
-  // SMS countries (public, no auth needed)
-  try {
-    const cData = await fetch("/api/sms-countries").then(r => r.json());
-    renderSmsCountries(cData.countries);
-  } catch (err) {
+  if (results[1].status === "rejected") {
     if (smsCountrySelect) smsCountrySelect.innerHTML = '<option value="">Failed to load countries</option>';
-    console.error("Failed to load SMS countries:", err.message);
+    console.error("Failed to load SMS countries:", results[1].reason?.message);
   }
 
-  // SMS services (only if country wasn't auto-selected by renderSmsCountries)
-  // If no country was auto-selected, load with default
+  // SMS services — only if country wasn't auto-selected by renderSmsCountries
   if (!smsSelectedCountry) {
-    await loadSmsServices();
+    try { await loadSmsServices(); } catch {}
   }
 }
 
@@ -929,8 +933,21 @@ async function checkAdmin() {
 setupPaymentProof();
 
 async function bootstrap() {
+  liveStatus.textContent = "Initializing...";
   console.log("[DEBUG] Bootstrap: initSession...");
   await initSession();
+  
+  if (!token) {
+    liveStatus.textContent = "No access token — open via Telegram /start";
+    liveStatus.className = "status-pill error";
+    if (telegramLink) {
+      telegramLink.textContent = "🤖 Open Telegram Bot";
+      telegramLink.style.display = "inline-flex";
+    }
+    return;
+  }
+
+  liveStatus.textContent = "Loading services...";
   console.log("[DEBUG] Bootstrap: token set, loading config...");
   await loadConfig();
   console.log("[DEBUG] Bootstrap: loadHealth...");
@@ -943,15 +960,13 @@ async function bootstrap() {
     window.history.replaceState({}, "", url);
   }
 
-  if (!token) {
-    console.warn("[DEBUG] No token after initSession — skipping protected API calls");
-    return;
-  }
-
-  console.log("[DEBUG] Bootstrap: loadWallet + loadOrders...");
+  liveStatus.textContent = "Checking access...";
   await checkAdmin();
   await loadWallet();
   await loadOrders();
+  
+  liveStatus.textContent = `Live · ${ordersList?.children?.length || 0} orders`;
+  liveStatus.className = "status-pill live";
   startAutoRefresh();
   console.log("[DEBUG] Bootstrap: complete");
 }
