@@ -7,8 +7,10 @@ const { config } = require("../config");
 const { webhookUrl } = require("../bot/telegram");
 const { getDomains, getEmail } = require("../services/heroSms");
 const {
+  findUserByTelegramId,
   findUserByToken,
   getOrCreateWebUser,
+  mergeWebUserBalance,
   saveOrder,
   listOrders,
   getOrderById,
@@ -312,8 +314,9 @@ async function createWebApp() {
       req.path === "/health" ||
       req.path === "/config" ||
       req.path === "/telegram-auth" ||
-      req.path === "/session" ||
-      req.path === "/sms-countries"
+    req.path === "/session" ||
+    req.path === "/sms-countries" ||
+    req.path === "/debug/merge"
     ) {
       return next();
     }
@@ -783,6 +786,35 @@ async function createWebApp() {
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/debug/merge", async (req, res) => {
+    // Local-only helper for running the Telegram/web merge flow without a real
+    // Telegram WebView initData payload. Disabled in production.
+    if (config.isProduction) {
+      res.status(404).json({ error: "Not available in production" });
+      return;
+    }
+
+    const callerTelegramId = req.get("x-admin-telegram-id");
+    if (!callerTelegramId || !config.adminTelegramIds.includes(String(callerTelegramId))) {
+      res.status(403).json({ error: "Admin-only debug endpoint" });
+      return;
+    }
+
+    const { telegramId } = req.body || {};
+    if (!telegramId) {
+      res.status(400).json({ error: "telegramId required" });
+      return;
+    }
+
+    try {
+      await mergeWebUserBalance(telegramId);
+      const user = await findUserByTelegramId(telegramId);
+      res.json({ ok: true, user });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 

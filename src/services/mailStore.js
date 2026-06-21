@@ -66,6 +66,8 @@ async function mergeWebUserBalance(telegramId) {
     const now = new Date().toISOString();
     let totalMerged = 0;
 
+    let canonicalWebUserId = null;
+
     for (const wu of webUsers) {
       const wuId = wu._id.toString();
 
@@ -85,7 +87,14 @@ async function mergeWebUserBalance(telegramId) {
 
         // Calculate gems to credit: the current balance already reflects
         // gems credited from any paid payments, so we only need the balance.
-        const gemsToCredit = wu.gems_balance || 0;
+        // Atomically zero the web user's balance — only one concurrent caller
+        // will see gems_balance > 0 and succeed.
+        const zeroResult = await d.collection("users").findOneAndUpdate(
+          { _id: wu._id, gems_balance: { $gt: 0 } },
+          { $set: { gems_balance: 0 } },
+          { returnDocument: "before" }
+        );
+        const gemsToCredit = (zeroResult?.gems_balance || 0);
 
         if (gemsToCredit > 0) {
           const paidCount = allPayments.filter(p => p.status === "paid").length;
@@ -108,18 +117,26 @@ async function mergeWebUserBalance(telegramId) {
             note: `Merged ${paidCount} paid payments + balance from web user #${wuId.slice(-6)}`,
             created_at: now,
           });
+          totalMerged += gemsToCredit;
         } else {
           console.log(`[MERGE] Reassigning ${allPayments.length} pending payment(s) from web user ${wuId} to TG user ${telegramId} (no paid payments to credit yet)`);
         }
 
-        // Zero the web user's balance AND copy the Telegram user's token
-        // so the web app's saved token works across sessions.
-        await d.collection("users").updateOne(
-          { _id: wu._id },
-          { $set: { gems_balance: 0, access_token: tgUser.access_token } }
-        );
+        // Unique access_token means only one merged web document can keep the TG token.
+        // Keep the first relevant web user as the canonical web identity; delete the rest
+        // after moving their payments/balance so repeated merges are idempotent.
+        if (!canonicalWebUserId) {
+          canonicalWebUserId = wuId;
+          console.log(`[MERGE] Marking web user ${wuId} as merged (telegram_id set, token kept original)`);
+          await d.collection("users").updateOne(
+            { _id: wu._id },
+            { $set: { telegram_id: String(telegramId), gems_balance: 0 } }
+          );
+        } else {
+          console.log(`[MERGE] Deleting duplicate merged web user ${wuId} after moving ${allPayments.length} payment(s) and ${gemsToCredit} gems`);
+          await d.collection("users").deleteOne({ _id: wu._id });
+        }
 
-        totalMerged += gemsToCredit;
       }
     }
 
@@ -293,6 +310,7 @@ module.exports = {
   findUserByToken,
   getOrCreateTelegramUser,
   getOrCreateWebUser,
+  mergeWebUserBalance,
   saveOrder,
   listOrders,
   getOrderById,

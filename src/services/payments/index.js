@@ -87,7 +87,7 @@ async function getWalletInfo(userId) {
   };
 }
 
-async function isAdmin(telegramId) {
+function isAdmin(telegramId) {
   return config.adminTelegramIds.includes(String(telegramId));
 }
 

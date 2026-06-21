@@ -7,9 +7,9 @@
  *
  * The script will:
  *   1. Create an anonymous web user (or reuse existing token)
- *   2. Create a mock payment with amount 0 (so no real charge)
- *   3. Approve the payment via the admin endpoint (using bot token)
- *   4. Call the telegram-auth endpoint to merge balances
+ *   2. Create a local manual top-up payment (no external charge)
+ *   3. Use the local-only debug merge endpoint to get the Telegram token
+ *   4. Approve the payment via the admin endpoint
  *   5. Print the final merged user object with debug logs.
  */
 
@@ -17,16 +17,15 @@ require('dotenv').config();
 
 // Node 18+ provides a global fetch implementation
 const BASE_URL = `http://localhost:${process.env.PORT || 3000}`;
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 function log(msg, data) {
   console.log(`[DEBUG] ${msg}`, data || '');
 }
 
-async function api(path, method = 'GET', body = null, token = null) {
+async function api(path, method = 'GET', body = null, token = null, extraHeaders = {}) {
   const opts = {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
   };
   if (token) opts.headers['Authorization'] = `Bearer ${token}`;
   if (body) opts.body = JSON.stringify(body);
@@ -51,33 +50,32 @@ async function main() {
   // 1. Get or create a web user token via the existing /api/session endpoint.
   //    /api/session creates a new anonymous web user when no token query is provided.
   const sessionInfo = await api('/api/session', 'GET');
-  const token = sessionInfo.token;
-  log('Obtained web token from /api/session', token);
+  const webToken = sessionInfo.token;
+  log('Obtained web token from /api/session', webToken);
 
-  // 2. Create a mock payment (amount 0, provider "debug")
-  const payment = await api('/api/payments', 'POST', {
-    amountMyr: 0,
-    provider: 'debug',
-    providerRef: `debug-${Date.now()}`,
-    status: 'paid',
-  }, token);
-  log('Created mock payment', payment);
+  // 2. Create a local manual top-up payment. This only creates a pending
+  //    manual payment record; it does not charge or create an SMS order.
+  const topup = await api('/api/topup', 'POST', {
+    method: 'manual_bank',
+    amountMyr: 5,
+  }, webToken);
+  log('Created manual top-up payment', topup);
 
-  // 3. Approve the payment via admin endpoint (using bot token)
-  await api('/api/admin/approve-payment', 'POST', { paymentId: payment._id }, BOT_TOKEN);
+  // 3. Merge web users into the Telegram user and get the Telegram token.
+  //    This local-only endpoint is disabled in production.
+  const mergeResult = await api('/api/debug/merge', 'POST', { telegramId: tgId }, null, {
+    'x-admin-telegram-id': tgId,
+  });
+  const adminToken = mergeResult.user?.accessToken;
+  log('Merge result', mergeResult);
+
+  // 4. Approve the payment via admin endpoint using the Telegram user token.
+  await api('/api/admin/approve-payment', 'POST', { paymentId: topup.paymentId }, adminToken);
   log('Admin approved payment');
 
-  // 4. Trigger merge via telegram-auth endpoint
-  // The telegram-auth endpoint expects initData; we simulate minimal initData.
-  const fakeInitData = new URLSearchParams({
-    id: tgId,
-    first_name: 'Test',
-    auth_date: Math.floor(Date.now() / 1000).toString(),
-    hash: 'invalidhash',
-  }).toString();
-
-  const mergeResult = await api('/api/telegram-auth', 'POST', fakeInitData, token);
-  log('Merge result', mergeResult);
+  // 5. Print final wallet
+  const wallet = await api('/api/wallet', 'GET', null, adminToken);
+  log('Final wallet', wallet);
 }
 
 main().catch(err => {
