@@ -39,7 +39,7 @@ const config = {
     10,
   ),
   orderMarkupPercent: parseFloat(process.env.ORDER_MARKUP_PERCENT || "20"),
-  minOrderGems: parseInt(process.env.MIN_ORDER_GEMS || "1000", 10),
+  minOrderGems: parseInt(process.env.MIN_ORDER_GEMS || "8000", 10),
   defaultOrderCostMyr: parseFloat(process.env.DEFAULT_ORDER_COST_MYR || "0.50"),
   minTopupMyr: parseFloat(process.env.MIN_TOPUP_MYR || "5"),
 
