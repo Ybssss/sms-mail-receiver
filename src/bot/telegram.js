@@ -676,7 +676,12 @@ function createBot() {
     try {
       await ctx.answerCbQuery();
       const result = await adminApprovePayment(id);
-      await ctx.editMessageText(`✅ Approved #${id}. Credited ${formatGems(result.gems)} gems.`);
+      try {
+        await ctx.editMessageText(`✅ Approved #${id}. Credited ${formatGems(result.gems)} gems.`);
+      } catch {
+        // Message may already be gone — acknowledge via answerCbQuery instead
+        await ctx.answerCbQuery(`Approved #${id} ✅`);
+      }
       // Notify user
       try {
         const d = getDb();
@@ -686,11 +691,8 @@ function createBot() {
           try { await ctx.telegram.sendMessage(payment.user_id, `✅ Your payment #${id} (RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems) has been approved!`); } catch {}
         }
       } catch {}
-      if (payment?.user_id) {
-        try { await ctx.telegram.sendMessage(payment.user_id, `✅ Your payment #${id} (RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems) has been approved!`); } catch {}
-      }
     } catch (err) {
-      await ctx.editMessageText(`❌ Approve failed: ${err.message}`);
+      try { await ctx.editMessageText(`❌ Approve failed: ${err.message}`); } catch { await ctx.answerCbQuery(`Failed: ${err.message}`); }
     }
   });
 
@@ -724,8 +726,8 @@ function createBot() {
       await ctx.answerCbQuery();
       const { adminRejectPayment } = require("../services/payments");
       await adminRejectPayment(id);
-      await ctx.editMessageText(`❌ Payment #${id} rejected.`);
-    } catch (err) { await ctx.editMessageText(`❌ Failed: ${err.message}`); }
+      try { await ctx.editMessageText(`❌ Payment #${id} rejected.`); } catch { await ctx.answerCbQuery(`Rejected #${id} ✅`); }
+    } catch (err) { try { await ctx.editMessageText(`❌ Failed: ${err.message}`); } catch { await ctx.answerCbQuery(`Failed: ${err.message}`); } }
   });
 
   // ── Revoke (undo misclick) ────────────────────────────────────
@@ -754,8 +756,8 @@ function createBot() {
       await ctx.answerCbQuery();
       const { adminRevokePayment } = require("../services/payments");
       const result = await adminRevokePayment(id);
-      await ctx.editMessageText(`↩ ${result.message}`);
-    } catch (err) { await ctx.editMessageText(`❌ Failed: ${err.message}`); }
+      try { await ctx.editMessageText(`↩ ${result.message}`); } catch { await ctx.answerCbQuery(`Revoked #${id} ✅`); }
+    } catch (err) { try { await ctx.editMessageText(`❌ Failed: ${err.message}`); } catch { await ctx.answerCbQuery(`Failed: ${err.message}`); } }
   });
 
   bot.command("webhook", async (ctx) => {

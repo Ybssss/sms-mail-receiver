@@ -987,28 +987,20 @@ async function createWebApp() {
     res.json({ ok: true });
   });
 
-  // ── Cache-busted SPA fallback ────────────────────────────────
-  // Inject git commit hash as cache-buster into index.html on every request
-  // Falls back to startup timestamp if git hash is unavailable
-  let buildVersion = "0";
-  try {
-    const { execSync } = require("child_process");
-    buildVersion = execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim() || String(Date.now());
-  } catch {
-    buildVersion = String(Date.now());
-  }
-  console.log("Build version for cache-busting:", buildVersion);
-
-  const cachedIndexHtml = (() => {
-    const raw = require("fs").readFileSync(
-      path.join(__dirname, "public", "index.html"),
-      "utf-8",
-    );
-    return raw.replace(/\{\{BUILD_VERSION\}\}/g, buildVersion);
-  })();
+  // ── SPA fallback with per-request cache-busting ──────────────
+  // Uses Date.now() per request so Telegram WebView never caches
+  const indexTemplate = require("fs").readFileSync(
+    path.join(__dirname, "public", "index.html"),
+    "utf-8",
+  );
 
   app.get("*", (_req, res) => {
-    res.type("html").send(cachedIndexHtml);
+    const version = String(Date.now());
+    const html = indexTemplate.replace(/\{\{BUILD_VERSION\}\}/g, version);
+    res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+    res.type("html").send(html);
   });
 
   return app;
