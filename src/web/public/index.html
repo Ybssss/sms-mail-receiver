@@ -72,8 +72,9 @@
         </div>
         <p class="hint" id="topup-result"></p>
         <div id="topup-confirm-section" class="topup-confirm hidden">
-          <p class="hint" style="margin:0;color:#fbbf24;">📸 Upload payment receipt to confirm</p>
-          <input id="payment-proof-input" type="file" accept="image/*" />
+          <p class="hint upload-hint">📸 Upload payment receipt to confirm</p>
+          <label for="payment-proof-input" class="sr-only">Payment receipt image</label>
+          <input id="payment-proof-input" type="file" accept="image/*" aria-label="Upload payment receipt" />
           <button type="button" id="confirm-payment-btn" class="confirm-btn">Send Payment Proof</button>
           <p class="hint" id="confirm-payment-result"></p>
         </div>
@@ -86,7 +87,8 @@
       <section class="panel">
         <h2>📧 Email Activation</h2>
         <form id="order-form" class="order-form">
-          <select id="service-select" aria-label="Select a service" required>
+          <label for="service-select" class="sr-only">Email service</label>
+          <select id="service-select" aria-label="Select an email service" required>
             <option value="">Loading services...</option>
           </select>
           <button type="submit">Order now</button>
@@ -108,6 +110,7 @@
             <option value="">Loading countries...</option>
           </select>
         </div>
+        <label for="sms-service-search" class="sr-only">Search SMS services</label>
         <input
           id="sms-service-search"
           type="text"
@@ -116,6 +119,7 @@
         />
         <div id="sms-summary" class="sms-summary hidden"></div>
         <form id="sms-order-form" class="order-form">
+          <label for="sms-service-select" class="sr-only">SMS service</label>
           <select
             id="sms-service-select"
             aria-label="Select SMS service"
