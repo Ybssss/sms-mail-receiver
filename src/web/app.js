@@ -45,6 +45,7 @@ const { myrToGems } = require("../services/exchangeRate");
 const { debitGems, getUserBalance } = require("../services/gems");
 const { validateInitData } = require("../services/telegramWebApp");
 const { getOrCreateTelegramUser } = require("../services/mailStore");
+const { getDb } = require("../db/database");
 
 async function createWebApp() {
   const app = express();
@@ -497,6 +498,26 @@ async function createWebApp() {
         `${service} activation`,
       );
 
+      // Save SMS activation to DB for listing
+      try {
+        const db = getDb();
+        await db.collection("sms_activations").insertOne({
+          user_id: req.user.id,
+          activation_id: activation.activationId,
+          phone_number: activation.phoneNumber,
+          service: service,
+          service_name: getServiceName(service),
+          cost_gems: costGems,
+          cost_usd: activation.cost,
+          status: "WAIT_CODE",
+          activation_time: activation.activationEndTime || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.error("[SMS] Failed to save activation to DB:", e.message);
+      }
+
       res.status(201).json({
         activationId: activation.activationId,
         phoneNumber: activation.phoneNumber,
@@ -534,6 +555,36 @@ async function createWebApp() {
       res.json({ ok: true, result });
     } catch (err) {
       res.status(502).json({ error: err.message });
+    }
+  });
+
+  // SMS activations list endpoint
+  app.get("/api/sms-activations", async (req, res) => {
+    try {
+      const db = getDb();
+      const activations = await db.collection("sms_activations")
+        .find({ user_id: req.user.id })
+        .sort({ created_at: -1 })
+        .limit(50)
+        .toArray();
+
+      const mapped = activations.map((a) => ({
+        id: a._id.toString(),
+        activationId: a.activation_id,
+        phoneNumber: a.phone_number,
+        service: a.service,
+        serviceName: a.service_name,
+        costGems: a.cost_gems,
+        costUsd: a.cost_usd,
+        status: a.status,
+        activationTime: a.activation_time,
+        smsCode: a.sms_code || null,
+        createdAt: a.created_at,
+      }));
+
+      res.json({ activations: mapped });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 

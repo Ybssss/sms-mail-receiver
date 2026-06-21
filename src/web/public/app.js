@@ -539,8 +539,10 @@ async function checkSmsCode(activationId) {
 }
 
 // ── Orders ───────────────────────────────────────────────────────
-function renderOrders(orders) {
+function renderOrders(orders, smsActivations = []) {
   ordersList.innerHTML = "";
+
+  // Render email orders
   orders.forEach((order) => {
     const card = document.createElement("article");
     card.className = `order-card${order.value ? " received" : ""}`;
@@ -558,7 +560,7 @@ function renderOrders(orders) {
     const meta = document.createElement("div");
     meta.className = "order-meta";
     const gemsPart = order.gemsCharged ? ` · ${fmt(order.gemsCharged)} gems` : "";
-    meta.textContent = `#${order.id} · ${order.site || ""} · ${order.domain || ""}${gemsPart}`;
+    meta.textContent = `📧 #${order.id} · ${order.site || ""} · ${order.domain || ""}${gemsPart}`;
     card.append(top, meta);
 
     if (order.value) {
@@ -586,14 +588,81 @@ function renderOrders(orders) {
     }
     ordersList.appendChild(card);
   });
-  emptyState.classList.toggle("hidden", orders.length > 0);
+
+  // Render SMS activations
+  smsActivations.forEach((a) => {
+    const card = document.createElement("article");
+    card.className = "order-card";
+
+    const top = document.createElement("div");
+    top.className = "order-top";
+    const label = document.createElement("div");
+    label.className = "order-email";
+    label.textContent = a.phoneNumber || "N/A";
+    const status = document.createElement("span");
+    status.className = "order-status";
+    status.textContent = a.smsCode ? "RECEIVED" : (a.status || "WAIT_CODE");
+    top.append(label, status);
+
+    const meta = document.createElement("div");
+    meta.className = "order-meta";
+    meta.textContent = `📱 SMS · ${a.serviceName || a.service} · ${fmt(a.costGems)} gems`;
+    card.append(top, meta);
+
+    if (a.activationTime) {
+      const timer = document.createElement("div");
+      timer.className = "order-meta";
+      const endTime = new Date(a.activationTime).getTime();
+      const updateTimer = () => {
+        const remaining = Math.max(0, endTime - Date.now());
+        if (remaining <= 0) {
+          timer.textContent = "⏰ Expired";
+          return;
+        }
+        const m = Math.floor(remaining / 60000);
+        const s = Math.floor((remaining % 60000) / 1000);
+        timer.textContent = `⏳ Expires in: ${m}m ${s}s`;
+      };
+      updateTimer();
+      const timerInterval = setInterval(updateTimer, 1000);
+      card._timerInterval = timerInterval;
+      card.appendChild(timer);
+    }
+
+    if (a.activationId) {
+      const meta2 = document.createElement("div");
+      meta2.className = "order-meta";
+      meta2.textContent = `ID: ${a.activationId}`;
+      card.appendChild(meta2);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "order-actions";
+    const checkBtn = document.createElement("button");
+    checkBtn.type = "button";
+    checkBtn.className = "btn-secondary";
+    checkBtn.textContent = "🔄 Check Code";
+    checkBtn.addEventListener("click", () => checkSmsCode(a.activationId));
+    actions.appendChild(checkBtn);
+    card.appendChild(actions);
+
+    ordersList.appendChild(card);
+  });
+
+  const totalItems = orders.length + smsActivations.length;
+  emptyState.classList.toggle("hidden", totalItems > 0);
 }
 
 async function loadOrders() {
   try {
-    const data = await api("/api/orders");
-    renderOrders(data.orders);
-    liveStatus.textContent = `Live · ${data.orders.length} SMS`;
+    const [emailData, smsData] = await Promise.allSettled([
+      api("/api/orders"),
+      api("/api/sms-activations"),
+    ]);
+    const orders = emailData.status === "fulfilled" ? (emailData.value.orders || []) : [];
+    const activations = smsData.status === "fulfilled" ? (smsData.value.activations || []) : [];
+    renderOrders(orders, activations);
+    liveStatus.textContent = `Live · ${orders.length} email · ${activations.length} SMS`;
     liveStatus.className = "status-pill live";
   } catch (err) {
     liveStatus.textContent = err.message;
