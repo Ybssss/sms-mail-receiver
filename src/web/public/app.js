@@ -226,12 +226,34 @@ async function createOrder(event) {
     await loadOrders();
     await loadWallet();
   } catch (err) {
-    liveStatus.textContent = err.message;
-    liveStatus.className = "status-pill error";
+    // Instant warning for insufficient gems
+    if (err.message.includes("Insufficient gems")) {
+      showWarning(err.message + "\n\n💡 Top up gems first using the section above.");
+    } else {
+      liveStatus.textContent = err.message;
+      liveStatus.className = "status-pill error";
+    }
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = "Order now";
   }
+}
+
+// ── Warning toast ─────────────────────────────────────────────────
+function showWarning(message, duration = 5000) {
+  let toast = document.getElementById("warning-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "warning-toast";
+    toast.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#fbbf24;color:#000;padding:14px 20px;border-radius:12px;font-weight:600;z-index:2000;max-width:90%;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.3);";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.style.display = "block";
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { toast.style.display = "none"; }, duration);
+  // Also scroll to topup panel
+  $("topup-panel")?.scrollIntoView({ behavior: "smooth" });
 }
 
 // ── SMS Activation ───────────────────────────────────────────────
@@ -466,7 +488,12 @@ async function createSmsOrder(event) {
       smsResult.after(checkBtn);
     }
   } catch (err) {
-    if (smsError) { smsError.textContent = err.message; smsError.classList.remove("hidden"); }
+    // Instant warning for insufficient gems
+    if (err.message.includes("Insufficient gems")) {
+      showWarning(err.message + "\n\n💡 Top up gems first using the section above.");
+    } else {
+      if (smsError) { smsError.textContent = err.message; smsError.classList.remove("hidden"); }
+    }
     if (smsResult) smsResult.textContent = "";
   } finally {
     submitBtn.disabled = false;

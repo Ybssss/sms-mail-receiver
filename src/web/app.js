@@ -663,7 +663,7 @@ function createWebApp() {
       const { getDb } = require("../db/database");
       const db = getDb();
       // Verify the payment belongs to this user
-      const payment = db.prepare("SELECT * FROM payments WHERE id = ? AND userId = ?").get(paymentId, req.user.id);
+      const payment = db.prepare("SELECT * FROM payments WHERE id = ? AND user_id = ?").get(paymentId, req.user.id);
       if (!payment) {
         res.status(404).json({ error: "Payment not found" });
         return;
