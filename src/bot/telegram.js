@@ -671,17 +671,15 @@ function createBot() {
   });
 
   bot.action(/^confirm_approve_(\w+)$/, async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.answerCbQuery("Admin only"); return; }
+    // Always acknowledge immediately to stop the loading spinner
+    await ctx.answerCbQuery();
+    if (!isAdmin(ctx.from.id)) return;
     const id = ctx.match[1];
     try {
-      await ctx.answerCbQuery();
       const result = await adminApprovePayment(id);
-      try {
-        await ctx.editMessageText(`✅ Approved #${id}. Credited ${formatGems(result.gems)} gems.`);
-      } catch {
-        // Message may already be gone — acknowledge via answerCbQuery instead
-        await ctx.answerCbQuery(`Approved #${id} ✅`);
-      }
+      const text = `✅ Approved #${id}. Credited ${formatGems(result.gems)} gems.`;
+      try { await ctx.editMessageText(text); }
+      catch { try { await ctx.reply(text); } catch {} }
       // Notify user
       try {
         const d = getDb();
@@ -692,7 +690,8 @@ function createBot() {
         }
       } catch {}
     } catch (err) {
-      try { await ctx.editMessageText(`❌ Approve failed: ${err.message}`); } catch { await ctx.answerCbQuery(`Failed: ${err.message}`); }
+      try { await ctx.editMessageText(`❌ Approve failed: ${err.message}`); }
+      catch { try { await ctx.reply(`❌ Approve failed: ${err.message}`); } catch {} }
     }
   });
 
@@ -720,14 +719,19 @@ function createBot() {
   });
 
   bot.action(/^confirm_reject_(\w+)$/, async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.answerCbQuery("Admin only"); return; }
+    await ctx.answerCbQuery();
+    if (!isAdmin(ctx.from.id)) return;
     const id = ctx.match[1];
     try {
-      await ctx.answerCbQuery();
       const { adminRejectPayment } = require("../services/payments");
       await adminRejectPayment(id);
-      try { await ctx.editMessageText(`❌ Payment #${id} rejected.`); } catch { await ctx.answerCbQuery(`Rejected #${id} ✅`); }
-    } catch (err) { try { await ctx.editMessageText(`❌ Failed: ${err.message}`); } catch { await ctx.answerCbQuery(`Failed: ${err.message}`); } }
+      const text = `❌ Payment #${id} rejected.`;
+      try { await ctx.editMessageText(text); }
+      catch { try { await ctx.reply(text); } catch {} }
+    } catch (err) {
+      try { await ctx.editMessageText(`❌ Failed: ${err.message}`); }
+      catch { try { await ctx.reply(`❌ Failed: ${err.message}`); } catch {} }
+    }
   });
 
   // ── Revoke (undo misclick) ────────────────────────────────────
@@ -750,14 +754,19 @@ function createBot() {
   });
 
   bot.action(/^confirm_revoke_(\w+)$/, async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.answerCbQuery("Admin only"); return; }
+    await ctx.answerCbQuery();
+    if (!isAdmin(ctx.from.id)) return;
     const id = ctx.match[1];
     try {
-      await ctx.answerCbQuery();
       const { adminRevokePayment } = require("../services/payments");
       const result = await adminRevokePayment(id);
-      try { await ctx.editMessageText(`↩ ${result.message}`); } catch { await ctx.answerCbQuery(`Revoked #${id} ✅`); }
-    } catch (err) { try { await ctx.editMessageText(`❌ Failed: ${err.message}`); } catch { await ctx.answerCbQuery(`Failed: ${err.message}`); } }
+      const text = `↩ ${result.message}`;
+      try { await ctx.editMessageText(text); }
+      catch { try { await ctx.reply(text); } catch {} }
+    } catch (err) {
+      try { await ctx.editMessageText(`❌ Failed: ${err.message}`); }
+      catch { try { await ctx.reply(`❌ Failed: ${err.message}`); } catch {} }
+    }
   });
 
   bot.command("webhook", async (ctx) => {
