@@ -675,11 +675,21 @@ function createWebApp() {
       db.prepare("UPDATE payments SET meta = ?, status = 'pending_review' WHERE id = ?")
         .run(JSON.stringify(existingMeta), paymentId);
       
-      // Notify admin via Telegram about new proof submission
+      // Notify admin via Telegram about new proof submission — include full user details
       try {
         const { bot } = require("../bot/telegram");
         if (bot && config.adminTelegramIds.length > 0) {
-          const msg = `📸 New payment proof submitted!\nPayment #${paymentId}\nUser: ${req.user.telegramId || req.user.id}\nAmount: RM ${payment.amountMyr}\nGems: ${payment.gems}\n\nUse /approve to review.`;
+          const userTelegramId = req.user.telegramId || "N/A";
+          const userId = req.user.id;
+          const msg = [
+            `📸 New payment proof submitted!`,
+            `💰 Payment #${paymentId}`,
+            `👤 User ID: #usr_${userId}`,
+            `📱 Telegram: ${userTelegramId}`,
+            `💵 Amount: RM ${payment.amountMyr} → ${payment.gems} gems`,
+            ``,
+            `Use /approve ${paymentId} to process`,
+          ].join("\n");
           for (const adminId of config.adminTelegramIds) {
             bot.telegram.sendMessage(adminId, msg).catch(() => {});
           }
