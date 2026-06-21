@@ -7,7 +7,9 @@ const { startKeepAlive, stopKeepAlive } = require('./workers/keepAlive');
 
 async function main() {
   validateConfig();
-  getDb();
+
+  const { connectDb } = require('./db/database');
+  await connectDb();
 
   const app = createWebApp();
   const bot = createBot();

@@ -56,29 +56,19 @@ function createWebApp() {
   try {
     const { getDb } = require("../db/database");
     const db = getDb();
-    const tngRow = db
-      .prepare("SELECT value FROM app_config WHERE key = ?")
-      .get("qr_tng_base64");
-    if (tngRow?.value) {
+    const tngDoc = await db.collection("app_config").findOne({ key: "qr_tng_base64" });
+    if (tngDoc?.value) {
       const fs = require("fs");
       const dir = path.join(__dirname, "public", "qr");
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, "qr-tng.jpg"),
-        Buffer.from(tngRow.value, "base64"),
-      );
+      fs.writeFileSync(path.join(dir, "qr-tng.jpg"), Buffer.from(tngDoc.value, "base64"));
     }
-    const bankRow = db
-      .prepare("SELECT value FROM app_config WHERE key = ?")
-      .get("qr_bank_base64");
-    if (bankRow?.value) {
+    const bankDoc = await db.collection("app_config").findOne({ key: "qr_bank_base64" });
+    if (bankDoc?.value) {
       const fs = require("fs");
       const dir = path.join(__dirname, "public", "qr");
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, "qr-bank.jpg"),
-        Buffer.from(bankRow.value, "base64"),
-      );
+      fs.writeFileSync(path.join(dir, "qr-bank.jpg"), Buffer.from(bankDoc.value, "base64"));
     }
   } catch (e) {
     console.warn("QR restore failed:", e.message);
@@ -663,56 +653,78 @@ function createWebApp() {
     try {
       const { getDb } = require("../db/database");
       const db = getDb();
-      // Verify the payment belongs to this user
-      console.log("[DEBUG] submit-proof looking up payment:", { paymentId, userId: req.user.id });
-      const row = db.prepare("SELECT * FROM payments WHERE id = ?").get(paymentId);
+      const { ObjectId } = require("mongodb");
+      let paymentFilter;
+      try { paymentFilter = { _id: new ObjectId(String(paymentId)) }; } catch { res.status(400).json({ error: "Invalid payment ID" }); return; }
+      
+      const row = await db.collection("payments").findOne(paymentFilter);
       console.log("[DEBUG] submit-proof found row:", row ? `status=${row.status}, user_id=${row.user_id}` : "NONE");
       if (!row || row.user_id !== req.user.id) {
         res.status(404).json({ error: "Payment not found or access denied" });
         return;
       }
-      // Store proof as base64 in the payment meta
-      const existingMeta = row.meta ? JSON.parse(row.meta) : {};
-      existingMeta.proof = proof.slice(0, 50) + "...(truncated)";
+
+      // Save proof as file temporarily
+      const fs = require("fs");
+      const path = require("path");
+      const os = require("os");
+      const tmpFile = path.join(os.tmpdir(), `proof_${paymentId}_${Date.now()}.jpg`);
+      const proofBuffer = Buffer.from(proof, "base64");
+      fs.writeFileSync(tmpFile, proofBuffer);
+
+      // Store minimal meta
+      const existingMeta = typeof row.meta === "object" && row.meta !== null ? row.meta : {};
       existingMeta.proofFileName = fileName || "";
       existingMeta.proofSize = proof.length;
-      db.prepare("UPDATE payments SET meta = ?, status = 'pending_review' WHERE id = ?")
-        .run(JSON.stringify(existingMeta), paymentId);
-      console.log("[DEBUG] submit-proof saved, sending notifications...");
-      
-      // Notify admin via Telegram
+      existingMeta.proofSaved = true;
+      await db.collection("payments").updateOne(
+        { _id: row._id },
+        { $set: { meta: existingMeta, status: "pending_review" } }
+      );
+
+      // Send photo to admin via Telegram
       const adminIds = config.adminTelegramIds;
       console.log("[DEBUG] submit-proof adminIds:", adminIds);
       if (adminIds && adminIds.length > 0) {
         const { bot } = require("../bot/telegram");
-        console.log("[DEBUG] submit-proof bot object:", bot ? "exists" : "NULL");
+        console.log("[DEBUG] submit-proof bot:", bot ? "exists" : "NULL");
         if (bot) {
           const userTelegramId = req.user.telegramId || "N/A";
           const userId = req.user.id;
-          const msg = [
-            `📸 New payment proof submitted!`,
+          const caption = [
+            `📸 New payment proof!`,
             `💰 Payment #${paymentId}`,
             `👤 User ID: #usr_${userId}`,
             `📱 Telegram: ${userTelegramId}`,
-            `💵 Amount: RM ${row.amount_myr} → ${row.gems} gems`,
-            `📎 Proof: ${fileName || "attached"} (${Math.round(proof.length/1024)}KB)`,
-            ``,
-            `Use /approve ${paymentId} to process`,
+            `💵 RM ${row.amount_myr} → ${row.gems} gems`,
+            `📎 ${fileName || "receipt.jpg"} (${Math.round(proof.length/1024)}KB)`,
           ].join("\n");
+
           for (const adminId of adminIds) {
             try {
-              const sent = await bot.telegram.sendMessage(adminId, msg);
-              console.log("[DEBUG] submit-proof notified admin", adminId, "msgId:", sent.message_id);
+              await bot.telegram.sendPhoto(adminId, { source: tmpFile }, {
+                caption,
+                reply_markup: {
+                  inline_keyboard: [[
+                    { text: "✅ Approve", callback_data: `confirm_approve_${paymentId}` },
+                    { text: "❌ Reject", callback_data: `confirm_reject_${paymentId}` },
+                  ]]
+                }
+              });
+              console.log("[DEBUG] submit-proof sent photo to admin", adminId);
             } catch (e) {
-              console.error("[DEBUG] submit-proof failed to notify admin", adminId, ":", e.message);
+              console.error("[DEBUG] submit-proof sendPhoto failed for admin", adminId, ":", e.message);
+              // Fallback: text message
+              try { await bot.telegram.sendMessage(adminId, caption); } catch {}
             }
           }
         } else {
-          console.error("[DEBUG] submit-proof bot is null — notifications not sent");
+          console.error("[DEBUG] submit-proof bot is NULL — no notification sent");
         }
-      } else {
-        console.log("[DEBUG] submit-proof no admin IDs configured");
       }
+
+      // Clean up temp file
+      try { fs.unlinkSync(tmpFile); } catch {}
 
       res.json({ ok: true, message: "Proof submitted for admin review" });
     } catch (err) {
@@ -732,7 +744,10 @@ function createWebApp() {
     try {
       const { getDb } = require("../db/database");
       const db = getDb();
-      const row = db.prepare("SELECT * FROM payments WHERE id = ?").get(paymentId);
+      const { ObjectId } = require("mongodb");
+      let filter;
+      try { filter = { _id: new ObjectId(String(paymentId)) }; } catch { res.status(400).json({ error: "Invalid payment ID" }); return; }
+      const row = await db.collection("payments").findOne(filter);
       if (!row || row.user_id !== req.user.id) {
         res.status(404).json({ error: "Payment not found" });
         return;
@@ -741,7 +756,7 @@ function createWebApp() {
         res.status(400).json({ error: `Cannot cancel payment in status: ${row.status}` });
         return;
       }
-      db.prepare("UPDATE payments SET status = 'cancelled' WHERE id = ?").run(paymentId);
+      await db.collection("payments").updateOne(filter, { $set: { status: "cancelled" } });
       console.log("[DEBUG] cancel-payment success:", paymentId);
       res.json({ ok: true, message: "Payment cancelled" });
     } catch (err) {

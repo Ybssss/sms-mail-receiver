@@ -1,289 +1,184 @@
 const { config } = require("../../config");
 const {
-  fetchUsdMyrRate,
-  myrToGems,
-  getExchangeInfo,
-} = require("../exchangeRate");
-const { creditGems, getUserBalance, formatGems } = require("../gems");
-const {
   createPayment,
   getPaymentById,
   getPaymentByProviderRef,
   updatePayment,
-  listPackages,
   listPendingManualPayments,
+  listPackages,
 } = require("./store");
-const { startBillplzTopup, verifyBillplzSignature } = require("./billplz");
+const { creditGems, getUserBalance } = require("../gems");
+const { getExchangeInfo, fetchUsdMyrRate, gemsPerMyr } = require("../exchangeRate");
 const { startManualTopup } = require("./manual");
-const { buildStarsPayload } = require("./telegramStars");
-const { createInvoiceLink } = require("../telegramBot");
 
-async function completePayment(paymentId, providerRef = null) {
-  const payment = getPaymentById(paymentId);
-  if (!payment) throw new Error("Payment not found");
-  if (payment.status === "paid") return { alreadyPaid: true, payment };
-
-  updatePayment(paymentId, {
-    status: "paid",
-    paidAt: new Date().toISOString(),
-    providerRef: providerRef || payment.providerRef,
-  });
-
-  const balance = creditGems(
-    payment.userId,
-    payment.gems,
-    "topup",
-    paymentId,
-    `${payment.provider} RM${payment.amountMyr}`,
-  );
-
-  return { payment: getPaymentById(paymentId), balance };
-}
-
-async function handleBillplzCallback(body) {
-  const paid = body.paid === "true" || body.paid === true;
-  const paymentId = parseInt(body.reference_1, 10);
-
-  if (body.x_signature && !verifyBillplzSignature(body, body.x_signature)) {
-    throw new Error("Invalid Billplz signature");
+async function createTopup(userId, { method, packageId, amountMyr }) {
+  // Validate method
+  if (method === "billplz" && !config.allowBillplz) {
+    throw new Error("Billplz is not enabled");
+  }
+  if ((method === "manual_tng" || method === "manual_bank") && !config.allowManualPayments) {
+    throw new Error("Manual payments are not enabled");
+  }
+  if (method === "telegram_stars") {
+    throw new Error("Stars payments are only available inside Telegram");
   }
 
-  if (!paid || !paymentId) return { ok: false, reason: "not_paid" };
-
-  const result = await completePayment(paymentId, body.id);
-  return { ok: true, ...result };
-}
-
-async function handleTelegramSuccessfulPayment(userId, telegramPayment) {
-  const providerRef = telegramPayment.telegram_payment_charge_id;
-  const existing = getPaymentByProviderRef("telegram_stars", providerRef);
-  if (existing?.status === "paid")
-    return { alreadyPaid: true, payment: existing };
-
-  const payload = JSON.parse(telegramPayment.invoice_payload || "{}");
-  const gems =
-    payload.gems ||
-    (await require("./telegramStars").gemsForStars(
-      telegramPayment.total_amount,
-    ));
-
-  if (payload.paymentId) {
-    const pending = getPaymentById(payload.paymentId);
-    if (pending?.status === "paid")
-      return { alreadyPaid: true, payment: pending };
-    if (pending && pending.userId === userId) {
-      return completePayment(payload.paymentId, providerRef);
-    }
-  }
-
-  let payment = existing;
-  if (!payment) {
-    const usdMyr = await fetchUsdMyrRate();
-    const amountMyr = telegramPayment.total_amount * config.myrPerStar;
-    payment = createPayment(userId, {
-      provider: "telegram_stars",
-      amountMyr,
-      gems,
-      providerRef,
-      meta: { stars: telegramPayment.total_amount },
-    });
-  }
-
-  return completePayment(payment.id, providerRef);
-}
-
-async function createTopup(userId, { method, packageId, amountMyr, token }) {
-  const packages = await listPackages();
-  let gems;
-  let myr;
-
-  if (packageId) {
-    const pkg = packages.find((p) => p.id === packageId);
-    if (!pkg) throw new Error("Package not found");
-    gems = pkg.gems;
-    myr = pkg.priceMyr;
-  } else if (amountMyr) {
-    myr = parseFloat(amountMyr);
-    if (!myr || myr < config.minTopupMyr) {
+  if (method === "billplz") {
+    const { createBill } = require("./billplz");
+    if (!amountMyr || amountMyr < config.minTopupMyr) {
       throw new Error(`Minimum top-up is RM ${config.minTopupMyr}`);
     }
-    const usdMyr = await fetchUsdMyrRate();
-    gems = myrToGems(myr, usdMyr);
-  } else {
-    throw new Error("Specify packageId or amountMyr");
+    const exchange = await getExchangeInfo();
+    const gems = Math.round(amountMyr * exchange.gemsPerMyr);
+
+    const payment = createPayment(userId, { provider: "billplz", amountMyr, gems });
+    const bill = await createBill(payment.id, amountMyr, gems, userId);
+    await updatePayment(payment.id, { providerRef: bill.id });
+    return { billUrl: bill.url, paymentId: payment.id, gems };
   }
 
-  switch (method) {
-    case "billplz":
-      return startBillplzTopup(userId, {
-        amountMyr: myr,
-        gems,
-        description: `${gems.toLocaleString()} gems top-up`,
-      });
-    case "manual_tng":
-    case "manual_bank":
-      return startManualTopup(userId, { provider: method, amountMyr: myr });
-    case "telegram_stars":
-      return startStarsTopup(userId, { amountMyr: myr, gems, packageId });
-    default:
-      throw new Error(`Unknown payment method: ${method}`);
-  }
-}
-
-async function startStarsTopup(userId, { amountMyr, gems, packageId = null }) {
-  const payment = createPayment(userId, {
-    provider: "telegram_stars",
-    amountMyr,
-    gems,
-    meta: { packageId },
-  });
-
-  const stars = Math.max(1, Math.ceil(amountMyr / config.myrPerStar));
-  const title = `${gems.toLocaleString()} gems`;
-  const payload = JSON.stringify({
-    userId,
-    packageId,
-    gems,
-    paymentId: payment.id,
-  });
-
-  const invoice = buildStarsPayload({
-    title,
-    description: `${gems.toLocaleString()} gems for Hero-SMS email orders`,
-    starCount: stars,
-    payload,
-  });
-
-  let invoiceLink = null;
-  try {
-    invoiceLink = await createInvoiceLink(invoice);
-  } catch {
-    // Bot may not be registered yet during tests; invoice still works in chat via replyWithInvoice.
+  if (method === "manual_tng" || method === "manual_bank") {
+    if (!amountMyr || amountMyr < config.minTopupMyr) {
+      throw new Error(`Minimum top-up is RM ${config.minTopupMyr}`);
+    }
+    const { paymentId, gems, instructions } = await startManualTopup(userId, {
+      provider: method,
+      amountMyr,
+    });
+    return { paymentId, gems, instructions };
   }
 
-  return {
-    method: "telegram_stars",
-    paymentId: payment.id,
-    gems,
-    amountMyr,
-    stars,
-    invoice,
-    invoiceLink,
-  };
+  // Package-based topup
+  if (packageId) {
+    const packages = await listPackages();
+    const pkg = packages.find((p) => p.id === packageId);
+    if (!pkg) throw new Error("Package not found");
+    amountMyr = pkg.priceMyr;
+  }
+
+  if (!amountMyr || amountMyr < config.minTopupMyr) {
+    throw new Error(`Minimum top-up is RM ${config.minTopupMyr}`);
+  }
+
+  const exchange = await getExchangeInfo();
+  const gems = Math.round(amountMyr * exchange.gemsPerMyr);
+
+  return { amountMyr, gems, note: "Top-up created" };
 }
 
 async function getWalletInfo(userId) {
   const exchange = await getExchangeInfo();
-  const packages = await listPackages();
+  const balance = await getUserBalance(userId);
+  const methods = [];
+
+  if (config.allowManualPayments) {
+    methods.push({ id: "manual_tng", name: "Touch n Go (manual)" });
+    methods.push({ id: "manual_bank", name: "Bank transfer (manual)" });
+  }
+  if (config.allowBillplz) {
+    methods.push({ id: "billplz", name: "Billplz (FPX / Card / TnG)" });
+  }
+
   return {
-    balance: getUserBalance(userId),
-    balanceFormatted: formatGems(getUserBalance(userId)),
+    balance,
     exchange,
-    packages,
-    methods: getAvailableMethods(),
+    methods,
     billplzFee: config.allowBillplz ? 0.035 : 0,
-    manual: {
-      tngPhone: config.allowManualPayments
-        ? config.manualTngPhone || null
-        : null,
-      bankName: config.allowManualPayments
-        ? config.manualBankName || null
-        : null,
-      bankAccount: config.allowManualPayments
-        ? config.manualBankAccount || null
-        : null,
-      bankHolder: config.allowManualPayments
-        ? config.manualBankHolder || null
-        : null,
-    },
-    minTopupMyr: config.minTopupMyr,
-    paymentPolicy: {
-      automatedOnly: !config.allowManualPayments,
-      creditCardAllowed: config.allowCreditCard,
-    },
   };
 }
 
-function getAvailableMethods() {
-  const methods = [];
-
-  if (config.telegramPaymentProviderToken) {
-    methods.push({
-      id: "telegram_stars",
-      name: "Telegram Stars (instant)",
-      type: "telegram",
-      automated: true,
-    });
-  }
-
-  if (
-    config.allowBillplz &&
-    config.billplzApiKey &&
-    config.billplzCollectionId
-  ) {
-    const label = config.allowCreditCard
-      ? "FPX / Card / TnG / GrabPay"
-      : "FPX / TnG / GrabPay (no card)";
-    methods.push({
-      id: "billplz",
-      name: label,
-      type: "redirect",
-      automated: true,
-    });
-  }
-
-  if (config.allowManualPayments && config.manualTngPhone) {
-    methods.push({
-      id: "manual_tng",
-      name: "Touch n Go (manual)",
-      type: "manual",
-      automated: false,
-    });
-  }
-
-  if (config.allowManualPayments && config.manualBankAccount) {
-    methods.push({
-      id: "manual_bank",
-      name: "Bank transfer (manual)",
-      type: "manual",
-      automated: false,
-    });
-  }
-
-  return methods;
-}
-
-function isAdmin(telegramId) {
-  if (!config.adminTelegramIds.length) return false;
+async function isAdmin(telegramId) {
   return config.adminTelegramIds.includes(String(telegramId));
 }
 
+async function handleBillplzCallback(params) {
+  const { billplzCallback } = require("./billplz");
+  return billplzCallback(params);
+}
+
+async function handleTelegramSuccessfulPayment(userId, paymentData) {
+  const providerRef = paymentData.telegram_payment_charge_id;
+  const totalAmount = paymentData.total_amount / 100; // Stars amount
+  const payload = paymentData.invoice_payload || "{}";
+  let parsedPayload = {};
+  try { parsedPayload = JSON.parse(payload); } catch {}
+
+  const gems = parsedPayload.gems || Math.round(totalAmount * (config.myrPerStar || 0.052) * 10000);
+  const amountMyr = parsedPayload.amountMyr || totalAmount * (config.myrPerStar || 0.052);
+
+  const existing = await getPaymentByProviderRef("telegram_stars", providerRef);
+  if (existing && existing.status === "paid") {
+    return { payment: existing };
+  }
+
+  const payment = existing || await createPayment(userId, {
+    provider: "telegram_stars",
+    amountMyr,
+    gems,
+    providerRef,
+  });
+
+  if (payment.status !== "paid") {
+    await completePayment(payment.id, userId);
+  }
+
+  return { payment: { ...payment, status: "paid" } };
+}
+
+async function completePayment(paymentId, userId) {
+  const payment = await getPaymentById(paymentId);
+  if (!payment) throw new Error("Payment not found");
+  if (payment.status === "paid") return payment;
+
+  await updatePayment(paymentId, { status: "paid", paidAt: new Date().toISOString() });
+  await creditGems(userId || payment.userId, payment.gems, "topup", paymentId, `Payment #${paymentId}`);
+
+  return { ...payment, status: "paid" };
+}
+
 async function adminApprovePayment(paymentId) {
+  const payment = await getPaymentById(paymentId);
+  if (!payment) throw new Error("Payment not found");
+  if (payment.status === "paid") throw new Error("Payment already processed");
+  if (payment.status === "cancelled") throw new Error("Payment was cancelled");
+
   return completePayment(paymentId);
 }
 
 async function adminRejectPayment(paymentId) {
-  const { getPaymentById, updatePayment } = require("./store");
-  const payment = getPaymentById(paymentId);
+  const payment = await getPaymentById(paymentId);
   if (!payment) throw new Error("Payment not found");
-  if (payment.status === "paid") throw new Error("Payment already approved");
-  updatePayment(paymentId, {
-    status: "rejected",
-    meta: { ...payment.meta, rejectedAt: new Date().toISOString() },
-  });
-  return { ok: true, paymentId };
+  if (payment.status !== "pending" && payment.status !== "pending_review") {
+    throw new Error("Cannot reject payment in status: " + payment.status);
+  }
+
+  await updatePayment(paymentId, { status: "cancelled" });
+  return { ok: true, message: `Payment #${paymentId} rejected` };
+}
+
+async function adminRevokePayment(paymentId) {
+  const payment = await getPaymentById(paymentId);
+  if (!payment) throw new Error("Payment not found");
+  if (payment.status !== "paid") throw new Error("Can only revoke paid payments");
+
+  // Debit the credited gems back
+  const { debitGems } = require("../gems");
+  await debitGems(payment.userId, payment.gems, "revoke", paymentId, `Revoke payment #${paymentId}`);
+  await updatePayment(paymentId, { status: "pending" });
+
+  return { ok: true, message: `Payment #${paymentId} revoked — ${payment.gems.toLocaleString()} gems deducted. Status reset to pending.` };
 }
 
 module.exports = {
-  completePayment,
-  handleBillplzCallback,
-  handleTelegramSuccessfulPayment,
   createTopup,
-  startStarsTopup,
   getWalletInfo,
-  getAvailableMethods,
   isAdmin,
+  completePayment,
   adminApprovePayment,
   adminRejectPayment,
+  adminRevokePayment,
+  handleBillplzCallback,
+  handleTelegramSuccessfulPayment,
   listPendingManualPayments,
+  listPackages,
 };

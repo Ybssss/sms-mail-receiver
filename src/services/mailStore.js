@@ -1,54 +1,64 @@
-const crypto = require('crypto');
-const { getDb } = require('../db/database');
+const crypto = require("crypto");
+const { getDb } = require("../db/database");
 
-const WAIT_STATUSES = new Set(['WAIT', 'PENDING', '1']);
+const WAIT_STATUSES = new Set(["WAIT", "PENDING", "1"]);
 
 function generateToken() {
-  return crypto.randomBytes(24).toString('hex');
+  return crypto.randomBytes(24).toString("hex");
 }
 
-function findUserByTelegramId(telegramId) {
-  const row = getDb().prepare('SELECT * FROM users WHERE telegram_id = ?').get(String(telegramId));
+async function findUserByTelegramId(telegramId) {
+  const d = getDb();
+  const row = await d.collection("users").findOne({ telegram_id: String(telegramId) });
   return mapUser(row);
 }
 
-function findUserByToken(token) {
-  const row = getDb().prepare('SELECT * FROM users WHERE access_token = ?').get(token);
+async function findUserByToken(token) {
+  const d = getDb();
+  const row = await d.collection("users").findOne({ access_token: token });
   return mapUser(row);
 }
 
-function getOrCreateTelegramUser(telegramId) {
-  const db = getDb();
-  const existing = findUserByTelegramId(telegramId);
+async function getOrCreateTelegramUser(telegramId) {
+  const d = getDb();
+  const existing = await findUserByTelegramId(telegramId);
   if (existing) return existing;
 
   const token = generateToken();
-  const result = db
-    .prepare('INSERT INTO users (telegram_id, access_token) VALUES (?, ?)')
-    .run(String(telegramId), token);
+  const now = new Date().toISOString();
+  const result = await d.collection("users").insertOne({
+    telegram_id: String(telegramId),
+    access_token: token,
+    gems_balance: 0,
+    created_at: now,
+  });
 
-  return mapUser(db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
+  return mapUser({ _id: result.insertedId, telegram_id: String(telegramId), access_token: token, gems_balance: 0, created_at: now });
 }
 
-function getOrCreateWebUser(token) {
-  const db = getDb();
+async function getOrCreateWebUser(token) {
+  const d = getDb();
   if (token) {
-    const user = findUserByToken(token);
+    const user = await findUserByToken(token);
     if (user) return user;
   }
 
   const newToken = generateToken();
-  const result = db
-    .prepare('INSERT INTO users (telegram_id, access_token) VALUES (NULL, ?)')
-    .run(newToken);
+  const now = new Date().toISOString();
+  const result = await d.collection("users").insertOne({
+    telegram_id: null,
+    access_token: newToken,
+    gems_balance: 0,
+    created_at: now,
+  });
 
-  return mapUser(db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid));
+  return mapUser({ _id: result.insertedId, telegram_id: null, access_token: newToken, gems_balance: 0, created_at: now });
 }
 
 function mapUser(row) {
   if (!row) return null;
   return {
-    id: row.id,
+    id: row._id ? row._id.toString() : row.id,
     telegramId: row.telegram_id,
     accessToken: row.access_token,
     gemsBalance: row.gems_balance ?? 0,
@@ -59,7 +69,7 @@ function mapUser(row) {
 function mapOrder(row) {
   if (!row) return null;
   return {
-    id: row.id,
+    id: row._id ? row._id.toString() : row.id,
     heroId: row.hero_id,
     site: row.site,
     domain: row.domain,
@@ -76,126 +86,101 @@ function mapOrder(row) {
   };
 }
 
-function saveOrder(userId, order, { gemsCharged } = {}) {
-  const db = getDb();
-  const existing = db.prepare('SELECT * FROM email_orders WHERE hero_id = ?').get(order.heroId);
+async function saveOrder(userId, order, { gemsCharged } = {}) {
+  const d = getDb();
+  const existing = await d.collection("email_orders").findOne({ hero_id: order.id || order.activationId || order.heroId });
+  const now = new Date().toISOString();
 
   if (existing) {
-    db.prepare(`
-      UPDATE email_orders
-      SET email = ?, status = ?, value = ?, message = ?, cost = ?, currency = ?,
-          gems_charged = COALESCE(?, gems_charged),
-          received_at = COALESCE(?, received_at), updated_at = datetime('now')
-      WHERE hero_id = ?
-    `).run(
-      order.email || existing.email,
-      order.status,
-      order.value,
-      order.message,
-      order.cost,
-      order.currency,
-      gemsCharged ?? existing.gems_charged,
-      order.value ? new Date().toISOString() : null,
-      order.heroId
+    await d.collection("email_orders").updateOne(
+      { _id: existing._id },
+      {
+        $set: {
+          email: order.email || existing.email,
+          status: order.status || existing.status,
+          value: order.value || existing.value || null,
+          message: order.message || existing.message || null,
+          updated_at: now,
+          received_at: order.receivedAt || existing.received_at || null,
+          gems_charged: gemsCharged || existing.gems_charged,
+        },
+      }
     );
-    return getOrderByHeroId(order.heroId);
+    const updated = await d.collection("email_orders").findOne({ _id: existing._id });
+    return mapOrder(updated);
   }
 
-  const result = db.prepare(`
-    INSERT INTO email_orders (user_id, hero_id, site, domain, email, status, value, message, cost, currency, gems_charged, received_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    userId,
-    order.heroId,
-    order.site,
-    order.domain,
-    order.email || null,
-    order.status,
-    order.value,
-    order.message,
-    order.cost,
-    order.currency,
-    gemsCharged ?? null,
-    order.value ? new Date().toISOString() : null
-  );
+  const result = await d.collection("email_orders").insertOne({
+    user_id: userId,
+    hero_id: order.id || order.activationId || order.heroId,
+    site: order.site || "",
+    domain: order.domain || "",
+    email: order.email || null,
+    status: order.status || "WAIT",
+    value: order.value || null,
+    message: order.message || null,
+    cost: order.cost || 0,
+    currency: order.currency || "USD",
+    gems_charged: gemsCharged || 0,
+    received_at: null,
+    created_at: now,
+    updated_at: now,
+  });
 
-  return mapOrder(db.prepare('SELECT * FROM email_orders WHERE id = ?').get(result.lastInsertRowid));
+  const newOrder = await d.collection("email_orders").findOne({ _id: result.insertedId });
+  return mapOrder(newOrder);
 }
 
-function getOrderByHeroId(heroId) {
-  const row = getDb().prepare('SELECT * FROM email_orders WHERE hero_id = ?').get(String(heroId));
-  return mapOrder(row);
-}
-
-function getOrderById(id, userId) {
-  const row = getDb()
-    .prepare('SELECT * FROM email_orders WHERE id = ? AND user_id = ?')
-    .get(id, userId);
-  return mapOrder(row);
-}
-
-function listOrders(userId, { limit = 50 } = {}) {
-  const rows = getDb()
-    .prepare(`
-      SELECT * FROM email_orders
-      WHERE user_id = ?
-      ORDER BY id DESC
-      LIMIT ?
-    `)
-    .all(userId, limit);
-
+async function listOrders(userId, { limit = 100 } = {}) {
+  const d = getDb();
+  const rows = await d.collection("email_orders")
+    .find({ user_id: userId })
+    .sort({ created_at: -1 })
+    .limit(limit)
+    .toArray();
   return rows.map(mapOrder);
 }
 
-function listWaitingOrders() {
-  const rows = getDb()
-    .prepare(`
-      SELECT * FROM email_orders
-      WHERE status IN ('WAIT', 'PENDING', '1') AND (value IS NULL OR value = '')
-      ORDER BY id ASC
-    `)
-    .all();
-
-  return rows.map(mapOrder);
-}
-
-function isWaiting(order) {
-  if (!order) return false;
-  if (order.value) return false;
-  return WAIT_STATUSES.has(String(order.status).toUpperCase());
+async function getOrderById(orderId, userId) {
+  const d = getDb();
+  const { ObjectId } = require("mongodb");
+  let filter;
+  try {
+    filter = { _id: new ObjectId(String(orderId)), user_id: userId };
+  } catch {
+    filter = { hero_id: String(orderId), user_id: userId };
+  }
+  const row = await d.collection("email_orders").findOne(filter);
+  return mapOrder(row);
 }
 
 function formatOrder(order) {
-  if (!order) return 'Order not found.';
   const lines = [
-    `#${order.id} · Hero ID ${order.heroId}`,
-    `Email: ${order.email || 'pending'}`,
-    `Site: ${order.site} · Domain: ${order.domain}`,
+    `Order #${order.id}`,
+    `Service: ${order.site || "N/A"}`,
+    `Domain: ${order.domain || "N/A"}`,
     `Status: ${order.status}`,
   ];
-  if (order.value) lines.push(`Code/value: ${order.value}`);
+  if (order.email) lines.push(`Email: ${order.email}`);
+  if (order.cost) lines.push(`Cost: ${order.cost} ${order.currency || "USD"}`);
+  if (order.gemsCharged) lines.push(`Gems: ${order.gemsCharged}`);
+  if (order.value) lines.push(`📨 Code: ${order.value}`);
   if (order.message) lines.push(`Message: ${order.message}`);
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 function formatOrderList(orders) {
-  if (!orders.length) return 'No email orders yet.';
-  return orders.map((order) => {
-    const icon = order.value ? '✅' : '⏳';
-    return `${icon} #${order.id} ${order.email || order.domain} — ${order.status}${order.value ? ` → ${order.value}` : ''}`;
-  }).join('\n');
+  return orders.map(formatOrder).join("\n\n");
 }
 
 module.exports = {
+  findUserByTelegramId,
   findUserByToken,
   getOrCreateTelegramUser,
   getOrCreateWebUser,
   saveOrder,
-  getOrderByHeroId,
-  getOrderById,
   listOrders,
-  listWaitingOrders,
-  isWaiting,
+  getOrderById,
   formatOrder,
   formatOrderList,
 };

@@ -1,84 +1,82 @@
-const { getDb } = require('../db/database');
+const { getDb } = require("../db/database");
 
-function getUserBalance(userId) {
-  const row = getDb().prepare('SELECT gems_balance FROM users WHERE id = ?').get(userId);
-  return row?.gems_balance ?? 0;
+async function getUserBalance(userId) {
+  const d = getDb();
+  const { ObjectId } = require("mongodb");
+  const uid = typeof userId === "string" ? userId : userId?.toString?.();
+  const filter = uid?.length === 24 ? { _id: new ObjectId(uid) } : { _id: uid };
+  const user = await d.collection("users").findOne(filter, { projection: { gems_balance: 1 } });
+  return user?.gems_balance ?? 0;
 }
 
-function creditGems(userId, amount, type, refId = null, note = null) {
-  if (amount <= 0) throw new Error('Credit amount must be positive');
+async function setUserBalance(userId, newBalance) {
+  const d = getDb();
+  const { ObjectId } = require("mongodb");
+  const filter = getObjectIdFilter(userId);
+  await d.collection("users").updateOne(filter, { $set: { gems_balance: newBalance } });
+}
 
-  const db = getDb();
-  const tx = db.transaction(() => {
-    const user = db.prepare('SELECT gems_balance FROM users WHERE id = ?').get(userId);
-    if (!user) throw new Error('User not found');
+function getObjectIdFilter(userId) {
+  const { ObjectId } = require("mongodb");
+  const uid = typeof userId === "string" ? userId : userId?.toString?.();
+  if (uid?.length === 24) {
+    try { return { _id: new ObjectId(uid) }; } catch {}
+  }
+  return { _id: uid };
+}
 
-    const balanceAfter = user.gems_balance + amount;
-    db.prepare('UPDATE users SET gems_balance = ? WHERE id = ?').run(balanceAfter, userId);
-    db.prepare(`
-      INSERT INTO gem_transactions (user_id, amount, type, ref_id, balance_after, note)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(userId, amount, type, refId, balanceAfter, note);
+async function creditGems(userId, amount, type, refId, note) {
+  const d = getDb();
+  const filter = getObjectIdFilter(userId);
+  const user = await d.collection("users").findOne(filter);
 
-    return balanceAfter;
+  if (!user) throw new Error("User not found");
+
+  const newBalance = (user.gems_balance || 0) + amount;
+  const now = new Date().toISOString();
+
+  await d.collection("users").updateOne(filter, { $set: { gems_balance: newBalance } });
+  await d.collection("gem_transactions").insertOne({
+    user_id: userId,
+    amount,
+    type,
+    ref_id: refId || null,
+    balance_after: newBalance,
+    note: note || "",
+    created_at: now,
   });
 
-  return tx();
+  return { balance: newBalance };
 }
 
-function debitGems(userId, amount, type, refId = null, note = null) {
-  if (amount <= 0) throw new Error('Debit amount must be positive');
-
-  const db = getDb();
-  const tx = db.transaction(() => {
-    const user = db.prepare('SELECT gems_balance FROM users WHERE id = ?').get(userId);
-    if (!user) throw new Error('User not found');
-    if (user.gems_balance < amount) {
-      throw new Error(`Insufficient gems: need ${amount}, have ${user.gems_balance}`);
-    }
-
-    const balanceAfter = user.gems_balance - amount;
-    db.prepare('UPDATE users SET gems_balance = ? WHERE id = ?').run(balanceAfter, userId);
-    db.prepare(`
-      INSERT INTO gem_transactions (user_id, amount, type, ref_id, balance_after, note)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(userId, -amount, type, refId, balanceAfter, note);
-
-    return balanceAfter;
-  });
-
-  return tx();
+async function debitGems(userId, amount, type, refId, note) {
+  return creditGems(userId, -amount, type, refId, note);
 }
 
-function listTransactions(userId, { limit = 50 } = {}) {
-  const rows = getDb()
-    .prepare(`
-      SELECT * FROM gem_transactions
-      WHERE user_id = ?
-      ORDER BY id DESC
-      LIMIT ?
-    `)
-    .all(userId, limit);
-
-  return rows.map((row) => ({
-    id: row.id,
-    amount: row.amount,
-    type: row.type,
-    refId: row.ref_id,
-    balanceAfter: row.balance_after,
-    note: row.note,
-    createdAt: row.created_at,
-  }));
+async function listTransactions(userId, { limit = 50 } = {}) {
+  const d = getDb();
+  return d.collection("gem_transactions")
+    .find({ user_id: userId })
+    .sort({ created_at: -1 })
+    .limit(limit)
+    .toArray();
 }
 
-function formatGems(n) {
-  return Number(n).toLocaleString('en-MY');
+function formatGems(gems) {
+  return Number(gems).toLocaleString("en-MY");
+}
+
+// ── SQLite compatibility shims ──────────────────────────────────
+async function getUserBalanceSync(userId) {
+  return getUserBalance(userId);
 }
 
 module.exports = {
   getUserBalance,
+  setUserBalance,
   creditGems,
   debitGems,
   listTransactions,
   formatGems,
+  getUserBalanceSync,
 };

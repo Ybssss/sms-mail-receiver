@@ -3,129 +3,110 @@ const { getDb } = require("../../db/database");
 function mapPayment(row) {
   if (!row) return null;
   return {
-    id: row.id,
+    id: row._id ? row._id.toString() : row.id,
     userId: row.user_id,
     provider: row.provider,
     providerRef: row.provider_ref,
     amountMyr: row.amount_myr,
     gems: row.gems,
     status: row.status,
-    meta: row.meta ? JSON.parse(row.meta) : null,
+    meta: row.meta || null,
     createdAt: row.created_at,
     paidAt: row.paid_at,
   };
 }
 
-function createPayment(
-  userId,
-  { provider, amountMyr, gems, providerRef = null, meta = null },
-) {
-  const db = getDb();
-  const result = db
-    .prepare(
-      `
-    INSERT INTO payments (user_id, provider, provider_ref, amount_myr, gems, status, meta)
-    VALUES (?, ?, ?, ?, ?, 'pending', ?)
-  `,
-    )
-    .run(
-      userId,
-      provider,
-      providerRef,
-      amountMyr,
-      gems,
-      meta ? JSON.stringify(meta) : null,
-    );
-
-  return getPaymentById(result.lastInsertRowid);
+async function createPayment(userId, { provider, amountMyr, gems, providerRef = null, meta = null }) {
+  const d = getDb();
+  const now = new Date().toISOString();
+  const result = await d.collection("payments").insertOne({
+    user_id: userId,
+    provider,
+    provider_ref: providerRef,
+    amount_myr: amountMyr,
+    gems,
+    status: "pending",
+    meta,
+    created_at: now,
+    paid_at: null,
+  });
+  return getPaymentById(result.insertedId.toString());
 }
 
-function getPaymentById(id) {
-  const row = getDb().prepare("SELECT * FROM payments WHERE id = ?").get(id);
+async function getPaymentById(id) {
+  const d = getDb();
+  const { ObjectId } = require("mongodb");
+  let filter;
+  try { filter = { _id: new ObjectId(String(id)) }; } catch { filter = { _id: String(id) }; }
+  const row = await d.collection("payments").findOne(filter);
   return mapPayment(row);
 }
 
-function getPaymentByProviderRef(provider, providerRef) {
-  const row = getDb()
-    .prepare("SELECT * FROM payments WHERE provider = ? AND provider_ref = ?")
-    .get(provider, providerRef);
+async function getPaymentByProviderRef(provider, providerRef) {
+  const d = getDb();
+  const row = await d.collection("payments").findOne({ provider, provider_ref: providerRef });
   return mapPayment(row);
 }
 
-function updatePayment(id, fields) {
-  const db = getDb();
-  const sets = [];
-  const values = [];
+async function updatePayment(id, fields) {
+  const d = getDb();
+  const { ObjectId } = require("mongodb");
+  let filter;
+  try { filter = { _id: new ObjectId(String(id)) }; } catch { filter = { _id: String(id) }; }
 
-  if (fields.status !== undefined) {
-    sets.push("status = ?");
-    values.push(fields.status);
-  }
-  if (fields.providerRef !== undefined) {
-    sets.push("provider_ref = ?");
-    values.push(fields.providerRef);
-  }
-  if (fields.paidAt !== undefined) {
-    sets.push("paid_at = ?");
-    values.push(fields.paidAt);
-  }
-  if (fields.meta !== undefined) {
-    sets.push("meta = ?");
-    values.push(JSON.stringify(fields.meta));
-  }
+  const set = {};
+  if (fields.status !== undefined) set.status = fields.status;
+  if (fields.providerRef !== undefined) set.provider_ref = fields.providerRef;
+  if (fields.paidAt !== undefined) set.paid_at = fields.paidAt;
+  if (fields.meta !== undefined) set.meta = fields.meta;
 
-  if (!sets.length) return getPaymentById(id);
-
-  values.push(id);
-  db.prepare(`UPDATE payments SET ${sets.join(", ")} WHERE id = ?`).run(
-    ...values,
-  );
+  if (Object.keys(set).length > 0) {
+    await d.collection("payments").updateOne(filter, { $set: set });
+  }
   return getPaymentById(id);
 }
 
-function listPayments(userId, { limit = 20 } = {}) {
-  const rows = getDb()
-    .prepare(
-      `
-      SELECT * FROM payments WHERE user_id = ?
-      ORDER BY id DESC LIMIT ?
-    `,
-    )
-    .all(userId, limit);
+async function listPayments(userId, { limit = 20 } = {}) {
+  const d = getDb();
+  const rows = await d.collection("payments")
+    .find({ user_id: userId })
+    .sort({ _id: -1 })
+    .limit(limit)
+    .toArray();
   return rows.map(mapPayment);
 }
 
-function listPendingManualPayments({ limit = 50 } = {}) {
-  const rows = getDb()
-    .prepare(
-      `
-      SELECT p.*, u.telegram_id FROM payments p
-      JOIN users u ON u.id = p.user_id
-      WHERE p.provider IN ('manual_tng', 'manual_bank') AND p.status IN ('pending', 'pending_review')
-      ORDER BY p.id ASC LIMIT ?
-    `,
-    )
-    .all(limit);
+async function listPendingManualPayments({ limit = 50 } = {}) {
+  const d = getDb();
+  const rows = await d.collection("payments").aggregate([
+    { $match: { provider: { $in: ["manual_tng", "manual_bank"] }, status: { $in: ["pending", "pending_review"] } } },
+    { $lookup: { from: "users", localField: "user_id", foreignField: "telegram_id", as: "userDocs" } },
+    { $unwind: { path: "$userDocs", preserveNullAndEmptyArrays: true } },
+    { $sort: { _id: 1 } },
+    { $limit: limit },
+  ]).toArray();
+
   return rows.map((row) => ({
     ...mapPayment(row),
-    telegramId: row.telegram_id,
+    telegramId: row.userDocs?.telegram_id || null,
   }));
 }
 
 async function listPackages() {
+  const d = getDb();
+  const rows = await d.collection("gem_packages")
+    .find({ active: 1 })
+    .sort({ sort_order: 1 })
+    .toArray();
+
   const { myrToGems, fetchUsdMyrRate } = require("../exchangeRate");
-  const rows = getDb()
-    .prepare(
-      "SELECT * FROM gem_packages WHERE active = 1 ORDER BY sort_order ASC, id ASC",
-    )
-    .all();
 
   return Promise.all(
     rows.map(async (row) => {
       const usdMyr = await fetchUsdMyrRate();
       const gems = myrToGems(row.price_myr, usdMyr);
       return {
-        id: row.id,
+        id: row._id ? row._id.toString() : row.id,
         name: `${gems.toLocaleString()} Gems`,
         gems,
         priceMyr: row.price_myr,

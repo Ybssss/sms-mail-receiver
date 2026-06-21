@@ -1,110 +1,81 @@
-const { orderEmail, cancelEmail, getDomains } = require("./heroSms");
-const { saveOrder } = require("./mailStore");
-const { getUserBalance, debitGems, creditGems } = require("./gems");
-const { getDomainOrderCostGems } = require("./pricing");
+const { placeEmailOrder } = require("./heroSms");
+const { getUserBalance, debitGems } = require("./gems");
+const { getExchangeInfo, fetchUsdMyrRate, myrToGems, gemsPerMyr } = require("./exchangeRate");
+const { getDb } = require("../db/database");
+const { config } = require("../config");
+
+async function resolveOrderDomain(domain, site) {
+  // Return the resolved site and domain for email activation
+  return {
+    site: site || domain || config.defaultSite,
+    domain: domain || config.defaultDomain,
+  };
+}
+
+async function estimateOrderCost(serviceName) {
+  // Estimate gem cost for a service
+  const exchange = await getExchangeInfo();
+  const usdMyr = await fetchUsdMyrRate();
+  const gemsPerMyrVal = gemsPerMyr(usdMyr);
+  const costMyr = config.defaultOrderCostMyr * (1 + config.orderMarkupPercent / 100);
+  const costGems = Math.max(Math.round(costMyr * gemsPerMyrVal), config.minOrderGems);
+  return { costGems, costMyr };
+}
 
 async function placeOrder(userId, site, domain) {
-  const domains = await getDomains();
-  const costGems = await getDomainOrderCostGems(domains, domain);
-  const balance = getUserBalance(userId);
+  const { costGems } = await estimateOrderCost(domain);
+  const balance = await getUserBalance(userId);
 
   if (balance < costGems) {
-    const err = new Error(
-      `Insufficient gems: need ${costGems.toLocaleString()}, have ${balance.toLocaleString()}`,
-    );
+    const err = new Error(`Insufficient gems: need ${costGems.toLocaleString()}, have ${balance.toLocaleString()}`);
     err.code = "INSUFFICIENT_GEMS";
     err.requiredGems = costGems;
     err.balance = balance;
     throw err;
   }
 
-  debitGems(userId, costGems, "order", null, `${site} @ ${domain}`);
+  // Place the order with Hero-SMS API
+  const order = await placeEmailOrder(site, domain);
 
-  try {
-    const remote = await orderEmail(site, domain);
-    const saved = saveOrder(userId, remote, { gemsCharged: costGems });
-    return { order: saved, gemsCharged: costGems };
-  } catch (err) {
-    creditGems(
-      userId,
-      costGems,
-      "refund",
-      null,
-      `Order failed: ${err.message}`,
-    );
-    throw err;
-  }
+  // Debit gems
+  await debitGems(userId, costGems, "email_order", order.id || order.activationId, `${site} email activation`);
+
+  // Save to database
+  const { saveOrder } = require("./mailStore");
+  const saved = await saveOrder(userId, order, { gemsCharged: costGems });
+
+  return {
+    order: saved,
+    gemsCharged: costGems,
+  };
 }
 
 async function cancelOrderWithRefund(userId, order) {
-  await cancelEmail(order.heroId);
+  const { cancelEmailOrder } = require("./heroSms");
+  const { creditGems } = require("./gems");
 
-  if (order.gemsCharged && order.gemsCharged > 0 && !order.value) {
-    creditGems(
-      userId,
-      order.gemsCharged,
-      "refund",
-      order.id,
-      `Cancel order #${order.id}`,
-    );
+  try {
+    await cancelEmailOrder(order.heroId);
+  } catch (e) {
+    console.error("Cancel order API error:", e.message);
   }
 
-  saveOrder(userId, { ...order, heroId: order.heroId, status: "CANCELLED" });
-}
-
-async function estimateOrderCost(domain) {
-  const domains = await getDomains();
-  const costGems = await getDomainOrderCostGems(domains, domain);
-  return { domain, costGems };
-}
-
-/**
- * Resolve a domain name to its proper site + domain fields.
- * Looks up the Hero-SMS domain list to find the matching entry.
- * Falls back to using the domain name itself as site if not found.
- */
-async function resolveOrderDomain(domainName, siteHint) {
-  const domains = await getDomains();
-  const list = Array.isArray(domains) ? domains : [];
-
-  console.log("[DEBUG] resolveOrderDomain input:", { domainName, siteHint });
-  console.log("[DEBUG] domain list count:", list.length);
-
-  // Try to find the exact match by name or domain field
-  const match = list.find(
-    (d) => (d.name || d.domain) === domainName || d.domain === domainName,
-  );
-
-  if (match) {
-    console.log("[DEBUG] Found match:", JSON.stringify(match));
-    // Hero-SMS may return domain objects with fields: name, domain, site, cost, count, currency
-    // Prioritize: site → name → domain as the 'site' value for ordering
-    const site = (match.site || match.name || match.domain || "").trim();
-    const domain = (match.domain || match.name || "").trim();
-    console.log("[DEBUG] Resolved:", { site, domain });
-    if (site && domain) return { site, domain };
+  if (order.gemsCharged && order.gemsCharged > 0) {
+    await creditGems(userId, order.gemsCharged, "refund", order.id || order.heroId, `Refund cancelled order #${order.id}`);
   }
 
-  // Fallback: if no match found, use what we have
-  const site = (siteHint || domainName || "").trim();
-  const domain = (domainName || "").trim();
-  console.log("[DEBUG] Fallback resolve:", { site, domain });
-  if (!site) {
-    throw new Error(
-      "Could not determine site for domain: " +
-        domainName +
-        ". Ensure domain exists in Hero-SMS.",
-    );
-  }
-  if (!domain) {
-    throw new Error("Could not determine domain name");
-  }
-  return { site, domain };
+  // Update order status in DB
+  const { getDb } = require("../db/database");
+  const d = getDb();
+  const { ObjectId } = require("mongodb");
+  let filter;
+  try { filter = { _id: new ObjectId(String(order.id)) }; } catch { filter = { hero_id: order.heroId }; }
+  await d.collection("email_orders").updateOne(filter, { $set: { status: "CANCELLED", updated_at: new Date().toISOString() } });
 }
 
 module.exports = {
+  resolveOrderDomain,
+  estimateOrderCost,
   placeOrder,
   cancelOrderWithRefund,
-  estimateOrderCost,
-  resolveOrderDomain,
 };

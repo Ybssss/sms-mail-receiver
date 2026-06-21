@@ -14,6 +14,7 @@ const config = {
   botUsername: (process.env.TELEGRAM_BOT_USERNAME || "").replace(/^@/, ""),
   webappUrl: (process.env.WEBAPP_URL || "").replace(/\/$/, ""),
   databasePath: process.env.DATABASE_PATH || "./data/mail.db",
+  mongoUri: process.env.MONGODB_URI || "mongodb://localhost:27017/sms-mail",
   isProduction: process.env.NODE_ENV === "production",
 
   heroSmsApiKey: process.env.HERO_SMS_API_KEY || "",

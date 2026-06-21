@@ -221,15 +221,17 @@ function createBot() {
   // ── Notification handler ──────────────────────────────────────
   setNotifier(async (order, source) => {
     const { getDb } = require("../db/database");
-    const user = getDb()
-      .prepare(
-        "SELECT u.telegram_id FROM users u JOIN email_orders e ON e.user_id = u.id WHERE e.id = ?",
-      )
-      .get(order.id);
-    if (!user?.telegram_id) return;
+    const d = getDb();
+    const { ObjectId } = require("mongodb");
+    let orderFilter;
+    try { orderFilter = { _id: new ObjectId(String(order.id)) }; } catch { orderFilter = { hero_id: order.heroId || order.id }; }
+    const eOrder = await d.collection("email_orders").findOne(orderFilter);
+    if (!eOrder) return;
+    const userDoc = await d.collection("users").findOne({ _id: eOrder.user_id });
+    if (!userDoc?.telegram_id) return;
     try {
       await bot.telegram.sendMessage(
-        user.telegram_id,
+        userDoc.telegram_id,
         formatMailAlert(order, source),
         { disable_web_page_preview: true },
       );
@@ -543,40 +545,208 @@ function createBot() {
     }
   });
 
-  // ── Approve ──────────────────────────────────────────────────
+  // ── Admin commands ──────────────────────────────────────────────
+  bot.command("admin", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    try {
+      const { getDb } = require("../db/database");
+      const d = getDb();
+      const [userCount, orderCount, paidCount] = await Promise.all([
+        d.collection("users").countDocuments(),
+        d.collection("email_orders").countDocuments(),
+        d.collection("payments").countDocuments({ status: "paid" }),
+      ]);
+      let apiBalance = "N/A";
+      try { const { getBalance } = require("../services/smsActivate"); const b = await getBalance(); apiBalance = `${b.balance} ${b.currency}`; } catch {}
+      await ctx.reply([
+        "🔐 Admin Dashboard",
+        `👥 Users: ${userCount}`,
+        `📧 Orders: ${orderCount}`,
+        `💰 Paid: ${paidCount}`,
+        `🏦 API Balance: ${apiBalance}`,
+        "",
+        "Commands: /approve /reject /revoke /users /user /stats",
+      ].join("\n"));
+    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+  });
+
+  bot.command("users", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    try {
+      const d = getDb();
+      const page = parseInt(ctx.message.text.replace(/^\/users\s*/i, ""), 10) || 1;
+      const skip = (page - 1) * 10;
+      const users = await d.collection("users").find().sort({ created_at: -1 }).skip(skip).limit(10).toArray();
+      if (!users.length) { await ctx.reply("No users found."); return; }
+      const lines = users.map((u, i) => {
+        const uid = u._id ? u._id.toString().slice(-6) : "?";
+        return `#${skip + i + 1} ID: ...${uid} | 💎 ${formatGems(u.gems_balance || 0)} | ${u.telegram_id ? "TG:" + u.telegram_id : "Web"}`;
+      });
+      await ctx.reply(`Users (page ${page}):\n${lines.join("\n")}\n\nUse /user <telegram_id> for details`);
+    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+  });
+
+  bot.command("user", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    const tgId = ctx.message.text.replace(/^\/user\s*/i, "").trim();
+    if (!tgId) { await ctx.reply("Usage: /user <telegram_id>"); return; }
+    try {
+      const d = getDb();
+      const user = await d.collection("users").findOne({ telegram_id: String(tgId) });
+      if (!user) { await ctx.reply("User not found."); return; }
+      const userId = user._id.toString();
+      const [orders, payments] = await Promise.all([
+        d.collection("email_orders").countDocuments({ user_id: userId }),
+        d.collection("payments").countDocuments({ user_id: userId, status: "paid" }),
+      ]);
+      await ctx.reply([
+        `👤 User: ${user.telegram_id || "Web only"}`,
+        `🆔 DB ID: #usr_${userId.slice(-8)}`,
+        `💎 Balance: ${formatGems(user.gems_balance || 0)}`,
+        `📧 Orders: ${orders}`,
+        `💰 Payments: ${payments}`,
+        `📅 Joined: ${user.created_at || "N/A"}`,
+      ].join("\n"));
+    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+  });
+
+  bot.command("balanceapi", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    try {
+      const { getBalance } = require("../services/smsActivate");
+      const bal = await getBalance();
+      await ctx.reply(`🏦 Hero-SMS API Balance: ${bal.balance} ${bal.currency}`);
+    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+  });
+
+  bot.command("stats", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    try {
+      const d = getDb();
+      const [users, orders, payments] = await Promise.all([
+        d.collection("users").countDocuments(),
+        d.collection("email_orders").countDocuments(),
+        d.collection("payments").countDocuments({ status: "paid" }),
+      ]);
+      await ctx.reply(`📊 Stats\n👥 ${users} users\n📧 ${orders} orders\n💰 ${payments} paid`);
+    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+  });
+
+  // ── Approve with double confirm ───────────────────────────────
   bot.command("approve", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) {
-      await ctx.reply("Admin only");
-      return;
-    }
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
     const id = parseInt(ctx.message.text.replace(/^\/approve\s*/i, ""), 10);
     if (!id) {
-      const pending = listPendingManualPayments();
-      if (!pending.length) {
-        await ctx.reply("No pending manual payments.");
-        return;
-      }
-      await ctx.reply(
-        [
-          "Pending:",
-          ...pending.map(
-            (p) =>
-              `#${p.id} RM${p.amountMyr} → ${formatGems(p.gems)} (${p.provider})`,
-          ),
-          "",
-          "Use /approve <id>",
-        ].join("\n"),
-      );
+      const d = getDb();
+      const pending = await d.collection("payments").aggregate([
+        { $match: { provider: { $in: ["manual_tng", "manual_bank"] }, status: { $in: ["pending", "pending_review"] } } },
+        { $lookup: { from: "users", localField: "user_id", foreignField: "telegram_id", as: "u" } },
+        { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+        { $sort: { _id: 1 } },
+        { $limit: 20 },
+      ]).toArray();
+      if (!pending.length) { await ctx.reply("No pending manual payments."); return; }
+      await ctx.reply([
+        "📋 Pending manual payments:",
+        ...pending.map((p) => `#${p._id.toString().slice(-6)} RM${p.amount_myr} → ${formatGems(p.gems)} (${p.provider}) ${p.status === "pending_review" ? "📎" : ""}`),
+        "",
+        "Use /approve <id> to approve with confirmation",
+      ].join("\n"));
       return;
     }
+    // Show confirmation before approving
+    const d = getDb();
+    const { ObjectId } = require("mongodb");
+    const payment = await d.collection("payments").findOne({ _id: new ObjectId(String(id)) });
+    if (!payment) { await ctx.reply("Payment not found."); return; }
+    await ctx.reply(
+      `Confirm: Approve #${id}?\n💰 RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems\n👤 user_id: ${payment.user_id}\n\nThis will credit the user's account.`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback("✅ Confirm Approve", `confirm_approve_${id}`)],
+        [Markup.button.callback("❌ Cancel", `confirm_cancel`)],
+      ])
+    );
+  });
+
+  bot.action(/^confirm_approve_(\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.answerCbQuery("Admin only"); return; }
+    const id = ctx.match[1];
     try {
+      await ctx.answerCbQuery();
       const result = await adminApprovePayment(id);
-      await ctx.reply(
-        `Approved #${id}. Credited ${formatGems(result.payment.gems)} gems.`,
-      );
+      await ctx.editMessageText(`✅ Approved #${id}. Credited ${formatGems(result.gems)} gems.`);
+      // Notify user
+      const payment = await ctx.db?.collection("payments")?.findOne({ _id: new ObjectId(String(id)) });
+      if (payment?.user_id) {
+        try { await ctx.telegram.sendMessage(payment.user_id, `✅ Your payment #${id} (RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems) has been approved!`); } catch {}
+      }
     } catch (err) {
-      await ctx.reply(`Failed: ${err.message}`);
+      await ctx.editMessageText(`❌ Approve failed: ${err.message}`);
     }
+  });
+
+  bot.action("confirm_cancel", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText("❌ Action cancelled.");
+  });
+
+  // ── Reject with double confirm ────────────────────────────────
+  bot.command("reject", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    const id = parseInt(ctx.message.text.replace(/^\/reject\s*/i, ""), 10);
+    if (!id) { await ctx.reply("Usage: /reject <payment_id>"); return; }
+    const d = getDb();
+    const { ObjectId } = require("mongodb");
+    const payment = await d.collection("payments").findOne({ _id: new ObjectId(String(id)) });
+    if (!payment) { await ctx.reply("Payment not found."); return; }
+    await ctx.reply(
+      `Confirm: REJECT #${id}?\n💰 RM ${payment.amount_myr}\n\nUser will NOT receive gems.`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback("❌ Confirm Reject", `confirm_reject_${id}`)],
+        [Markup.button.callback("↩ Cancel", `confirm_cancel`)],
+      ])
+    );
+  });
+
+  bot.action(/^confirm_reject_(\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.answerCbQuery("Admin only"); return; }
+    const id = ctx.match[1];
+    try {
+      await ctx.answerCbQuery();
+      const { adminRejectPayment } = require("../services/payments");
+      await adminRejectPayment(id);
+      await ctx.editMessageText(`❌ Payment #${id} rejected.`);
+    } catch (err) { await ctx.editMessageText(`❌ Failed: ${err.message}`); }
+  });
+
+  // ── Revoke (undo misclick) ────────────────────────────────────
+  bot.command("revoke", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    const id = parseInt(ctx.message.text.replace(/^\/revoke\s*/i, ""), 10);
+    if (!id) { await ctx.reply("Usage: /revoke <payment_id> — undo an approved payment"); return; }
+    const d = getDb();
+    const { ObjectId } = require("mongodb");
+    const payment = await d.collection("payments").findOne({ _id: new ObjectId(String(id)) });
+    if (!payment) { await ctx.reply("Payment not found."); return; }
+    if (payment.status !== "paid") { await ctx.reply(`Cannot revoke — status is: ${payment.status}`); return; }
+    await ctx.reply(
+      `⚠️ Revoke #${id}?\n💰 RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems will be DEDUCTED from user.\n\nStatus will reset to pending.`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback("↩ Confirm Revoke", `confirm_revoke_${id}`)],
+        [Markup.button.callback("❌ Cancel", `confirm_cancel`)],
+      ])
+    );
+  });
+
+  bot.action(/^confirm_revoke_(\d+)$/, async (ctx) => {
+    if (!isAdmin(ctx.from.id)) { await ctx.answerCbQuery("Admin only"); return; }
+    const id = ctx.match[1];
+    try {
+      await ctx.answerCbQuery();
+      const { adminRevokePayment } = require("../services/payments");
+      const result = await adminRevokePayment(id);
+      await ctx.editMessageText(`↩ ${result.message}`);
+    } catch (err) { await ctx.editMessageText(`❌ Failed: ${err.message}`); }
   });
 
   bot.command("webhook", async (ctx) => {
