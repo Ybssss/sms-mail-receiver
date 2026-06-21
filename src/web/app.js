@@ -92,7 +92,7 @@ async function createWebApp() {
           ],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           imgSrc: ["'self'", "data:"],
-          connectSrc: ["'self'"],
+          connectSrc: ["'self'", "https://sms-mail-receiver.onrender.com", "wss://sms-mail-receiver.onrender.com"],
           frameAncestors: ["'self'", "https://telegram.org"],
         },
       },
@@ -202,13 +202,22 @@ async function createWebApp() {
     (req, res) => {
       const initData =
         typeof req.body === "string" ? req.body : req.body?.initData;
-      const parsed = validateInitData(initData);
 
+      console.log("[AUTH] Telegram auth request received, initData length:", initData?.length || 0);
+      if (!initData) {
+        console.log("[AUTH] No initData provided");
+        res.status(401).json({ error: "Missing Telegram initData" });
+        return;
+      }
+
+      const parsed = validateInitData(initData);
       if (!parsed) {
+        console.log("[AUTH] initData validation FAILED — hash mismatch or expired");
         res.status(401).json({ error: "Invalid Telegram session" });
         return;
       }
 
+      console.log("[AUTH] Validated Telegram user:", parsed.user.id, "first_name:", parsed.user.first_name);
       const user = getOrCreateTelegramUser(parsed.user.id);
       res.json({
         token: user.accessToken,

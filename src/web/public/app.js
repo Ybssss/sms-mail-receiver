@@ -81,16 +81,25 @@ function initTelegramWebApp() {
 }
 
 async function authFromTelegram() {
-  if (!tgWebApp?.initData) return false;
+  if (!tgWebApp?.initData) {
+    console.log("[AUTH] No Telegram initData available — not in Telegram WebView");
+    return false;
+  }
   try {
     const response = await fetch("/api/telegram-auth", {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
       body: tgWebApp.initData,
     });
-    if (!response.ok) return false;
+    
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      console.error("[AUTH] Telegram auth failed:", response.status, errData.error || response.statusText);
+      return false;
+    }
 
     const data = await response.json();
+    console.log("[AUTH] Telegram auth success, user:", data.telegramId, data.firstName);
     setToken(data.token);
     tokenPanel.hidden = true;
 
@@ -100,7 +109,7 @@ async function authFromTelegram() {
     }
     return true;
   } catch (e) {
-    console.error("Telegram auth error:", e.message);
+    console.error("[AUTH] Telegram auth network error:", e.message);
     return false;
   }
 }
