@@ -15,8 +15,6 @@ async function main() {
   const bot = createBot();
   setBotInstance(bot);
 
-  await launchBot(bot, app);
-
   startPollWorker();
   startKeepAlive();
 
@@ -24,6 +22,12 @@ async function main() {
     console.log(`Server listening on port ${config.port}`);
     console.log(`Hero-SMS poll interval: ${config.pollIntervalMs}ms`);
     console.log(`Keep-alive interval: ${config.keepAliveIntervalMs}ms`);
+  });
+
+  // Do not await bot launch in local dev: Telegraf's launch() stays pending
+  // until the bot stops, and awaiting it would block the HTTP server forever.
+  launchBot(bot, app).catch((err) => {
+    console.error("Telegram bot launch failed:", err.message);
   });
 
   process.once('SIGINT', () => {
