@@ -396,20 +396,35 @@ function createWebApp() {
         });
       }
 
+      // Calculate gem cost from USD prices
+      let gemsPerMyrVal = 10000; // fallback
+      try {
+        const { gemsPerMyr } = require("../services/exchangeRate");
+        const usdMyr = await require("../services/exchangeRate").fetchUsdMyrRate();
+        gemsPerMyrVal = gemsPerMyr(usdMyr);
+      } catch {}
+
       const enriched = services.map((s) => {
         const priceData = priceMap[s.code] || {};
         const costUsd = priceData.cost || 0;
         const apiName = s.name || s.code;
+        const costMyr = costUsd * (1 + config.orderMarkupPercent / 100);
+        const costGems = Math.max(
+          Math.round(costMyr * gemsPerMyrVal),
+          config.minOrderGems,
+        );
         return {
           code: s.code,
           name: getServiceName(s.code, apiName),
           rawName: apiName,
           costUsd,
+          costGems,
           stock: priceData.count || 0,
           physicalStock: priceData.physicalCount || 0,
         };
       });
 
+      console.log(`[DEBUG] /api/sms-services returning ${enriched.length} services for country ${countryId}`);
       res.json({ services: enriched, enabled: true, currentCountryId: countryId });
     } catch (err) {
       console.error("[DEBUG] SMS services error:", err.message);
