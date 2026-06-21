@@ -379,11 +379,11 @@ function createWebApp() {
         res.json({ services: [], enabled: false, currentCountryId: null });
         return;
       }
-      // Use numeric country ID (config default or query param override)
+      // Get ALL services (no country filter) then prices for the selected country
       const queryCountry = req.query.country || "";
       const defaultCountryId = config.smsActivateCountryId || "153";
       const countryId = queryCountry || defaultCountryId;
-      const services = await getSmsServices(countryId);
+      const services = await getSmsServices(null); // No country filter = all services
       const prices = await getSmsPrices(null, countryId);
 
       // Combine services with prices

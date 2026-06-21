@@ -121,8 +121,7 @@ async function getPrices(service, country) {
     if (numericCountry && numericCountry !== "NaN") {
       params.country = numericCountry;
     } else {
-      // Non-numeric country code — try to look up the numeric ID
-      // Default to 153 (Malaysia) if we can't resolve it
+      // Non-numeric country code — fall back to default
       console.log(
         "[DEBUG] getPrices got non-numeric country:",
         country,
@@ -134,45 +133,77 @@ async function getPrices(service, country) {
 
   const result = await smsActivateRequest("getPrices", params);
 
-  // SMS-Activate returns raw text like:
-  // {"oz":{"oz":"0.15","count":100}}
-  // The heroic API may return it differently
+  // Handle raw JSON text response: {"oz":{"oz":"0.15","count":100}, ...}
   if (typeof result === "string" && result.trim()) {
     try {
       const parsed = JSON.parse(result);
-      // Format: { "serviceCode": { "serviceCode": "price", "count": 100 } } or similar
+      console.log("[DEBUG] getPrices parsed JSON object keys count:", Object.keys(parsed).length);
       const prices = [];
       for (const [code, data] of Object.entries(parsed)) {
         if (typeof data === "object" && data !== null) {
-          const cost =
-            data[code] ||
-            data.cost ||
-            Object.values(data).find(
-              (v) => typeof v === "string" && !isNaN(Number(v)),
-            ) ||
-            0;
-          const count = data.count || 0;
-          prices.push({ [code]: { cost: Number(cost), count: Number(count) } });
+          // Find cost: first try data[code], then look for any numeric string value
+          let cost = data[code] || data.cost;
+          if (cost === undefined || cost === null) {
+            // Try finding any value that looks like a price (e.g. "0.15")
+            const entries = Object.entries(data);
+            for (const [k, v] of entries) {
+              if (k !== "count" && k !== "physicalCount" && typeof v === "string" && !isNaN(Number(v))) {
+                cost = v;
+                break;
+              }
+            }
+          }
+          const count = data.count ?? 0;
+          const physicalCount = data.physicalCount ?? 0;
+          prices.push({ [code]: { cost: Number(cost || 0), count: Number(count), physicalCount: Number(physicalCount) } });
         }
       }
+      console.log("[DEBUG] getPrices parsed", prices.length, "price entries");
       if (prices.length > 0) return prices;
-    } catch {}
+    } catch (e) {
+      console.log("[DEBUG] getPrices JSON parse error:", e.message);
+    }
   }
 
-  // Result format: Array of { "serviceCode": { cost, count, physicalCount } }
+  // Result might be an array: [{ "oz": { cost: 0.15, count: 100 } }, ...]
   if (Array.isArray(result)) {
+    console.log("[DEBUG] getPrices returned array of", result.length);
     if (result.length > 0) return result;
   }
 
   // Maybe wrapped in status object
   if (result?.status === "success" && result.data) {
+    console.log("[DEBUG] getPrices wrapped in status object, data is", typeof result.data);
     return Array.isArray(result.data) ? result.data : [];
+  }
+
+  // Maybe it's already a plain object (JSON parsed by the request handler)
+  if (typeof result === "object" && result !== null && !Array.isArray(result)) {
+    console.log("[DEBUG] getPrices returned plain object, keys:", Object.keys(result).length);
+    const prices = [];
+    for (const [code, data] of Object.entries(result)) {
+      if (typeof data === "object" && data !== null) {
+        let cost = data[code] || data.cost;
+        if (cost === undefined || cost === null) {
+          for (const [k, v] of Object.entries(data)) {
+            if (k !== "count" && k !== "physicalCount" && typeof v === "string" && !isNaN(Number(v))) {
+              cost = v;
+              break;
+            }
+          }
+        }
+        const count = data.count ?? 0;
+        const physicalCount = data.physicalCount ?? 0;
+        prices.push({ [code]: { cost: Number(cost || 0), count: Number(count), physicalCount: Number(physicalCount) } });
+      }
+    }
+    if (prices.length > 0) return prices;
   }
 
   console.log(
     "[DEBUG] getPrices unexpected format:",
     typeof result,
-    JSON.stringify(result).slice(0, 300),
+    JSON.stringify(result).slice(0, 500),
   );
   return [];
 }
