@@ -468,7 +468,10 @@ async function createWebApp() {
         const priceData = priceMap[s.code] || {};
         const costUsd = priceData.cost || 0;
         const apiName = s.name || s.code;
-        const costMyr = costUsd * usdMyr * (1 + config.orderMarkupPercent / 100);
+        // Your real cost: (USD × 1.11 purchase tax) × USD/MYR × 1.06 conversion tax × (1 + markup%)
+        const purchaseTax = 1.11;
+        const conversionTax = 1.06;
+        const costMyr = costUsd * purchaseTax * conversionTax * usdMyr * (1 + config.orderMarkupPercent / 100);
         const costGems = Math.max(
           Math.round(costMyr * gemsPerMyrVal),
           config.minOrderGems,
@@ -518,7 +521,10 @@ async function createWebApp() {
         await require("../services/exchangeRate").fetchUsdMyrRate();
       const gemsPerMyrFn = require("../services/exchangeRate").gemsPerMyr;
       const gemsPerMyrVal = gemsPerMyrFn(usdMyr);
-      const costMyr = activation.cost * usdMyr * (1 + config.orderMarkupPercent / 100);
+      // Your real cost: (USD × 1.11 purchase tax) × USD/MYR × 1.06 conversion tax × (1 + markup%)
+      const purchaseTax = 1.11;
+      const conversionTax = 1.06;
+      const costMyr = activation.cost * purchaseTax * conversionTax * usdMyr * (1 + config.orderMarkupPercent / 100);
       const costGems = Math.max(
         Math.round(costMyr * gemsPerMyrVal),
         config.minOrderGems,

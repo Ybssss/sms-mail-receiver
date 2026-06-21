@@ -14,10 +14,13 @@ async function resolveOrderDomain(domain, site) {
 
 async function estimateOrderCost(serviceName) {
   // Estimate gem cost for a service
+  // Your real cost: (USD × 1.11 purchase tax) × USD/MYR × 1.06 conversion tax × (1 + markup%)
   const exchange = await getExchangeInfo();
   const usdMyr = await fetchUsdMyrRate();
   const gemsPerMyrVal = gemsPerMyr(usdMyr);
-  const costMyr = config.defaultOrderCostMyr * (1 + config.orderMarkupPercent / 100);
+  const purchaseTax = 1.11;
+  const conversionTax = 1.06;
+  const costMyr = config.defaultOrderCostMyr * purchaseTax * conversionTax * usdMyr * (1 + config.orderMarkupPercent / 100);
   const costGems = Math.max(Math.round(costMyr * gemsPerMyrVal), config.minOrderGems);
   return { costGems, costMyr };
 }
