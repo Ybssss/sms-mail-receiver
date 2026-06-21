@@ -422,9 +422,10 @@ async function createWebApp() {
 
       // Calculate gem cost from USD prices
       let gemsPerMyrVal = 10000; // fallback
+      let usdMyr = config.baseUsdMyr || 4.0; // fallback
       try {
         const { gemsPerMyr } = require("../services/exchangeRate");
-        const usdMyr = await require("../services/exchangeRate").fetchUsdMyrRate();
+        usdMyr = await require("../services/exchangeRate").fetchUsdMyrRate();
         gemsPerMyrVal = gemsPerMyr(usdMyr);
       } catch {}
 
@@ -432,7 +433,7 @@ async function createWebApp() {
         const priceData = priceMap[s.code] || {};
         const costUsd = priceData.cost || 0;
         const apiName = s.name || s.code;
-        const costMyr = costUsd * (1 + config.orderMarkupPercent / 100);
+        const costMyr = costUsd * usdMyr * (1 + config.orderMarkupPercent / 100);
         const costGems = Math.max(
           Math.round(costMyr * gemsPerMyrVal),
           config.minOrderGems,
@@ -482,7 +483,7 @@ async function createWebApp() {
         await require("../services/exchangeRate").fetchUsdMyrRate();
       const gemsPerMyrFn = require("../services/exchangeRate").gemsPerMyr;
       const gemsPerMyrVal = gemsPerMyrFn(usdMyr);
-      const costMyr = activation.cost * (1 + config.orderMarkupPercent / 100);
+      const costMyr = activation.cost * usdMyr * (1 + config.orderMarkupPercent / 100);
       const costGems = Math.max(
         Math.round(costMyr * gemsPerMyrVal),
         config.minOrderGems,
