@@ -354,6 +354,8 @@ function renderSmsCountries(countries) {
 if (smsCountrySelect) {
   smsCountrySelect.addEventListener("change", async () => {
     const countryId = smsCountrySelect.value;
+    // Preserve current service selection
+    const previousSelected = smsServiceSelect?.value || "";
     try {
       const url = countryId
         ? `/api/sms-services?country=${countryId}`
@@ -361,10 +363,23 @@ if (smsCountrySelect) {
       const data = await api(url);
       if (data.currentCountryId)
         smsCountrySelect.dataset.currentCountryId = String(data.currentCountryId);
-      renderSmsServices(data.services);
+      if (data.services && data.services.length > 0) {
+        renderSmsServices(data.services);
+        // Restore previously selected service if it still exists
+        if (previousSelected && smsServiceList.some(s => s.code === previousSelected)) {
+          smsServiceSelect.value = previousSelected;
+        }
+      } else {
+        // Keep existing services, just show a hint
+        if (smsError) {
+          smsError.textContent = "No services available for selected country, showing all services.";
+          smsError.classList.remove("hidden");
+        }
+      }
     } catch (err) {
+      // Don't clear existing services on error
       if (smsError) {
-        smsError.textContent = err.message;
+        smsError.textContent = "Failed to load services for country: " + err.message;
         smsError.classList.remove("hidden");
       }
     }
