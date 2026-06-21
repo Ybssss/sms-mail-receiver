@@ -200,7 +200,7 @@ async function createWebApp() {
     "/api/telegram-auth",
     authLimiter,
     express.text({ type: "*/*" }),
-    (req, res) => {
+    async (req, res) => {
       const initData =
         typeof req.body === "string" ? req.body : req.body?.initData;
 
@@ -288,7 +288,7 @@ async function createWebApp() {
 
   // ── Auth middleware for protected API routes ─────────────────────────────
   // Only checks Authorization header — no token from query params
-  app.use("/api", (req, res, next) => {
+  app.use("/api", async (req, res, next) => {
     // Skip public endpoints already handled above
     if (
       req.path === "/health" ||
