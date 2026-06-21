@@ -19,6 +19,12 @@ async function connectDb() {
   await client.connect();
   db = client.db(DB_NAME);
 
+  // Drop old unique index on telegram_id if it exists (caused E11000 for web users with null)
+  try {
+    await db.collection("users").dropIndex("telegram_id_1");
+    console.log("[DB] Dropped old unique index on users.telegram_id");
+  } catch {}
+
   // Create indexes
   await Promise.all([
     db.collection("users").createIndex({ telegram_id: 1 }),
