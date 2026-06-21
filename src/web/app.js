@@ -230,7 +230,7 @@ async function createWebApp() {
 
       console.log("[AUTH] Validated Telegram user:", parsed.user.id, "first_name:", parsed.user.first_name,
         "language_code:", parsed.user.language_code || "none");
-      const user = getOrCreateTelegramUser(parsed.user.id);
+      const user = await getOrCreateTelegramUser(parsed.user.id);
       res.json({
         token: user.accessToken,
         source: "telegram",
@@ -308,7 +308,7 @@ async function createWebApp() {
       return;
     }
 
-    const user = findUserByToken(token);
+    const user = await findUserByToken(token);
     if (!user) {
       res.status(401).json({ error: "Invalid access token" });
       return;
@@ -474,7 +474,7 @@ async function createWebApp() {
         Math.round(costMyr * gemsPerMyrVal),
         config.minOrderGems,
       );
-      const balance = getUserBalance(req.user.id);
+      const balance = await getUserBalance(req.user.id);
 
       if (balance < costGems) {
         res.status(402).json({
@@ -488,7 +488,7 @@ async function createWebApp() {
       }
 
       // Debit gems and return activation info
-      debitGems(
+      await debitGems(
         req.user.id,
         costGems,
         "sms_activation",
@@ -536,8 +536,9 @@ async function createWebApp() {
     }
   });
 
-  app.get("/api/orders", (req, res) => {
-    res.json({ orders: listOrders(req.user.id, { limit: 100 }) });
+  app.get("/api/orders", async (req, res) => {
+    const orders = await listOrders(req.user.id, { limit: 100 });
+    res.json({ orders });
   });
 
   app.get("/api/orders/:id", async (req, res) => {
