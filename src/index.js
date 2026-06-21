@@ -1,6 +1,6 @@
 const { config, validateConfig } = require('./config');
 const { getDb } = require('./db/database');
-const { createBot, launchBot } = require('./bot/telegram');
+const { createBot, launchBot, setBotInstance } = require('./bot/telegram');
 const { createWebApp } = require('./web/app');
 const { startPollWorker, stopPollWorker } = require('./services/pollWorker');
 const { startKeepAlive, stopKeepAlive } = require('./workers/keepAlive');
@@ -11,6 +11,7 @@ async function main() {
 
   const app = createWebApp();
   const bot = createBot();
+  setBotInstance(bot);
 
   await launchBot(bot, app);
 

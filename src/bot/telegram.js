@@ -810,9 +810,13 @@ async function launchBot(bot, app) {
   }
 }
 
+let botInstance = null;
+
 module.exports = {
   createBot,
   launchBot,
+  get bot() { return botInstance; },
+  setBotInstance(b) { botInstance = b; },
   webhookUrl: () =>
     config.webappUrl
       ? `${config.webappUrl}/webhook/hero-sms`

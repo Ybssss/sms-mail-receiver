@@ -653,9 +653,10 @@ function createWebApp() {
   });
 
   app.post("/api/admin/submit-proof", async (req, res) => {
-    // This endpoint is public (any authenticated user can submit proof for their payment)
+    console.log("[DEBUG] submit-proof called, body keys:", Object.keys(req.body || {}));
     const { paymentId, proof, fileName } = req.body || {};
     if (!paymentId || !proof) {
+      console.log("[DEBUG] submit-proof missing fields:", { paymentId: !!paymentId, proof: !!proof });
       res.status(400).json({ error: "paymentId and proof (base64) required" });
       return;
     }
@@ -663,22 +664,29 @@ function createWebApp() {
       const { getDb } = require("../db/database");
       const db = getDb();
       // Verify the payment belongs to this user
-      const payment = db.prepare("SELECT * FROM payments WHERE id = ? AND user_id = ?").get(paymentId, req.user.id);
-      if (!payment) {
-        res.status(404).json({ error: "Payment not found" });
+      console.log("[DEBUG] submit-proof looking up payment:", { paymentId, userId: req.user.id });
+      const row = db.prepare("SELECT * FROM payments WHERE id = ?").get(paymentId);
+      console.log("[DEBUG] submit-proof found row:", row ? `status=${row.status}, user_id=${row.user_id}` : "NONE");
+      if (!row || row.user_id !== req.user.id) {
+        res.status(404).json({ error: "Payment not found or access denied" });
         return;
       }
-      // Store proof as base64 in the payment meta or a separate column
-      const existingMeta = payment.meta ? JSON.parse(payment.meta) : {};
-      existingMeta.proof = proof;
+      // Store proof as base64 in the payment meta
+      const existingMeta = row.meta ? JSON.parse(row.meta) : {};
+      existingMeta.proof = proof.slice(0, 50) + "...(truncated)";
       existingMeta.proofFileName = fileName || "";
+      existingMeta.proofSize = proof.length;
       db.prepare("UPDATE payments SET meta = ?, status = 'pending_review' WHERE id = ?")
         .run(JSON.stringify(existingMeta), paymentId);
+      console.log("[DEBUG] submit-proof saved, sending notifications...");
       
-      // Notify admin via Telegram about new proof submission — include full user details
-      try {
+      // Notify admin via Telegram
+      const adminIds = config.adminTelegramIds;
+      console.log("[DEBUG] submit-proof adminIds:", adminIds);
+      if (adminIds && adminIds.length > 0) {
         const { bot } = require("../bot/telegram");
-        if (bot && config.adminTelegramIds.length > 0) {
+        console.log("[DEBUG] submit-proof bot object:", bot ? "exists" : "NULL");
+        if (bot) {
           const userTelegramId = req.user.telegramId || "N/A";
           const userId = req.user.id;
           const msg = [
@@ -686,18 +694,58 @@ function createWebApp() {
             `💰 Payment #${paymentId}`,
             `👤 User ID: #usr_${userId}`,
             `📱 Telegram: ${userTelegramId}`,
-            `💵 Amount: RM ${payment.amountMyr} → ${payment.gems} gems`,
+            `💵 Amount: RM ${row.amount_myr} → ${row.gems} gems`,
+            `📎 Proof: ${fileName || "attached"} (${Math.round(proof.length/1024)}KB)`,
             ``,
             `Use /approve ${paymentId} to process`,
           ].join("\n");
-          for (const adminId of config.adminTelegramIds) {
-            bot.telegram.sendMessage(adminId, msg).catch(() => {});
+          for (const adminId of adminIds) {
+            try {
+              const sent = await bot.telegram.sendMessage(adminId, msg);
+              console.log("[DEBUG] submit-proof notified admin", adminId, "msgId:", sent.message_id);
+            } catch (e) {
+              console.error("[DEBUG] submit-proof failed to notify admin", adminId, ":", e.message);
+            }
           }
+        } else {
+          console.error("[DEBUG] submit-proof bot is null — notifications not sent");
         }
-      } catch {}
+      } else {
+        console.log("[DEBUG] submit-proof no admin IDs configured");
+      }
 
       res.json({ ok: true, message: "Proof submitted for admin review" });
     } catch (err) {
+      console.error("[DEBUG] submit-proof error:", err.message, err.stack);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Cancel payment (user withdraw misclick) ──────────────────
+  app.post("/api/cancel-payment", async (req, res) => {
+    const { paymentId } = req.body || {};
+    if (!paymentId) {
+      res.status(400).json({ error: "paymentId required" });
+      return;
+    }
+    console.log("[DEBUG] cancel-payment request:", { paymentId, userId: req.user.id });
+    try {
+      const { getDb } = require("../db/database");
+      const db = getDb();
+      const row = db.prepare("SELECT * FROM payments WHERE id = ?").get(paymentId);
+      if (!row || row.user_id !== req.user.id) {
+        res.status(404).json({ error: "Payment not found" });
+        return;
+      }
+      if (row.status !== "pending" && row.status !== "pending_review") {
+        res.status(400).json({ error: `Cannot cancel payment in status: ${row.status}` });
+        return;
+      }
+      db.prepare("UPDATE payments SET status = 'cancelled' WHERE id = ?").run(paymentId);
+      console.log("[DEBUG] cancel-payment success:", paymentId);
+      res.json({ ok: true, message: "Payment cancelled" });
+    } catch (err) {
+      console.error("[DEBUG] cancel-payment error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
