@@ -240,9 +240,9 @@ async function createWebApp() {
     },
   );
 
-  app.get("/api/session", authLimiter, (req, res) => {
+  app.get("/api/session", authLimiter, async (req, res) => {
     const token = req.query.token;
-    const user = token ? findUserByToken(token) : null;
+    const user = token ? await findUserByToken(token) : null;
 
     if (user) {
       res.json({
@@ -252,7 +252,7 @@ async function createWebApp() {
       return;
     }
 
-    const newUser = getOrCreateWebUser(null);
+    const newUser = await getOrCreateWebUser(null);
     res.json({ token: newUser.accessToken, source: "web" });
   });
 
@@ -328,8 +328,9 @@ async function createWebApp() {
     }
   });
 
-  app.get("/api/wallet/transactions", (req, res) => {
-    res.json({ transactions: listTransactions(req.user.id, { limit: 50 }) });
+  app.get("/api/wallet/transactions", async (req, res) => {
+    const transactions = await listTransactions(req.user.id, { limit: 50 });
+    res.json({ transactions });
   });
 
   app.get("/api/exchange", async (_req, res) => {
@@ -543,7 +544,7 @@ async function createWebApp() {
 
   app.get("/api/orders/:id", async (req, res) => {
     const id = parseInt(req.params.id, 10);
-    const order = getOrderById(id, req.user.id);
+    const order = await getOrderById(id, req.user.id);
     if (!order) {
       res.status(404).json({ error: "Order not found" });
       return;
@@ -551,7 +552,7 @@ async function createWebApp() {
 
     try {
       const remote = await getEmail(order.heroId);
-      const updated = saveOrder(req.user.id, remote);
+      const updated = await saveOrder(req.user.id, remote);
       res.json({ order: updated });
     } catch {
       res.json({ order });
@@ -613,7 +614,7 @@ async function createWebApp() {
 
   app.delete("/api/orders/:id", orderLimiter, async (req, res) => {
     const id = parseInt(req.params.id, 10);
-    const order = getOrderById(id, req.user.id);
+    const order = await getOrderById(id, req.user.id);
     if (!order) {
       res.status(404).json({ error: "Order not found" });
       return;
