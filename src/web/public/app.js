@@ -5,6 +5,8 @@ let refreshMs = 2000;
 let wallet = null;
 let domainList = [];
 let smsServiceList = [];
+let smsCountryList = [];
+let smsSelectedCountry = "";
 let tgWebApp = null;
 
 const orderForm = document.getElementById("order-form");
@@ -15,6 +17,7 @@ const smsSearchInput = document.getElementById("sms-service-search");
 const smsOrderForm = document.getElementById("sms-order-form");
 const smsResult = document.getElementById("sms-result");
 const smsError = document.getElementById("sms-error");
+const smsSummary = document.getElementById("sms-summary");
 const ordersList = document.getElementById("orders-list");
 const emptyState = document.getElementById("empty-state");
 const liveStatus = document.getElementById("live-status");
@@ -26,6 +29,10 @@ const topupMethodSelect = document.getElementById("topup-method");
 const customMyrInput = document.getElementById("custom-myr");
 const customTopupBtn = document.getElementById("custom-topup-btn");
 const topupResult = document.getElementById("topup-result");
+const topupConfirmSection = document.getElementById("topup-confirm-section");
+const paymentProofInput = document.getElementById("payment-proof-input");
+const confirmPaymentBtn = document.getElementById("confirm-payment-btn");
+const confirmPaymentResult = document.getElementById("confirm-payment-result");
 const orderCostHint = document.getElementById("order-cost-hint");
 const serviceError = document.getElementById("service-error");
 const refreshBtn = document.getElementById("refresh-btn");
@@ -33,6 +40,8 @@ const tokenPanel = document.getElementById("token-panel");
 const tokenInput = document.getElementById("token-input");
 const tokenSave = document.getElementById("token-save");
 const telegramLink = document.getElementById("telegram-link");
+
+let lastPaymentId = null;
 
 function initTelegramWebApp() {
   tgWebApp = window.Telegram?.WebApp;
@@ -94,11 +103,7 @@ function fmtSeconds(ms) {
 
 function setToken(nextToken) {
   token = nextToken;
-  try {
-    sessionStorage.setItem(STORAGE_KEY, token);
-  } catch {
-    // sessionStorage may be restricted in some embedded contexts
-  }
+  try { sessionStorage.setItem(STORAGE_KEY, token); } catch {}
   tokenPanel.hidden = Boolean(token);
 }
 
@@ -132,7 +137,6 @@ function renderWallet(w) {
     topupMethodSelect.appendChild(opt);
   });
 
-  // If no methods, show unavailable message
   if (topupMethodSelect.options.length === 0) {
     const opt = document.createElement("option");
     opt.value = "";
@@ -141,12 +145,10 @@ function renderWallet(w) {
     topupMethodSelect.appendChild(opt);
   }
 
-  // Show processing fee hint if Billplz is an option
   const feeHint = document.getElementById("processing-fee-hint");
   if (feeHint) {
     const hasBillplz = w.methods.some((m) => m.id === "billplz");
-    if (hasBillplz) feeHint.classList.remove("hidden");
-    else feeHint.classList.add("hidden");
+    feeHint.classList.toggle("hidden", !hasBillplz);
   }
 }
 
@@ -155,6 +157,7 @@ async function loadWallet() {
   renderWallet(w);
 }
 
+// ── Email Activation ───────────────────────────────────────────────
 function renderServices(domains) {
   domainList = domains;
   serviceSelect.innerHTML = '<option value="">Select a service...</option>';
@@ -170,13 +173,11 @@ function renderServices(domains) {
     return;
   }
 
-  // Show all services with gem cost and stock info
   domains.forEach((d) => {
     const name = d.name || d.domain;
     const count = d.count != null ? d.count : "?";
     const opt = document.createElement("option");
     opt.value = name;
-    // Store extra data attributes on the option for the backend
     opt.dataset.site = d.site || d.name || d.domain || "";
     opt.dataset.domain = d.domain || d.name || "";
     opt.textContent = `${name} — ${fmt(d.costGems)} gems (stock: ${count})`;
@@ -186,152 +187,49 @@ function renderServices(domains) {
   updateOrderCostHint();
 }
 
-function renderOrders(orders) {
-  ordersList.innerHTML = "";
-
-  orders.forEach((order) => {
-    const card = document.createElement("article");
-    card.className = `order-card${order.value ? " received" : ""}`;
-
-    const top = document.createElement("div");
-    top.className = "order-top";
-
-    const email = document.createElement("div");
-    email.className = "order-email";
-    email.textContent =
-      order.email || `${order.domain || order.site} (pending)`;
-
-    const status = document.createElement("span");
-    status.className = `order-status${order.value ? " received" : ""}`;
-    status.textContent = order.value ? "RECEIVED" : order.status;
-
-    top.append(email, status);
-
-    const meta = document.createElement("div");
-    meta.className = "order-meta";
-    const gemsPart = order.gemsCharged
-      ? ` · ${fmt(order.gemsCharged)} gems`
-      : "";
-    meta.textContent = `#${order.id} · ${order.site || ""} · ${order.domain || ""}${gemsPart}`;
-
-    card.append(top, meta);
-
-    if (order.value) {
-      const value = document.createElement("div");
-      value.className = "order-value";
-      value.textContent = order.value;
-      card.appendChild(value);
-    }
-
-    if (order.message) {
-      const message = document.createElement("div");
-      message.className = "order-meta";
-      message.textContent = order.message;
-      card.appendChild(message);
-    }
-
-    if (!order.value && order.status !== "CANCELLED") {
-      const actions = document.createElement("div");
-      actions.className = "order-actions";
-
-      const cancelBtn = document.createElement("button");
-      cancelBtn.type = "button";
-      cancelBtn.className = "cancel-btn";
-      cancelBtn.textContent = "Cancel";
-      cancelBtn.addEventListener("click", () => cancelOrder(order.id));
-
-      actions.appendChild(cancelBtn);
-      card.appendChild(actions);
-    }
-
-    ordersList.appendChild(card);
-  });
-
-  emptyState.classList.toggle("hidden", orders.length > 0);
+function updateOrderCostHint() {
+  const selected = serviceSelect.value;
+  if (!selected) {
+    orderCostHint.textContent = "Select a service to see gem cost.";
+    return;
+  }
+  const domain = domainList.find((d) => (d.name || d.domain) === selected);
+  orderCostHint.textContent = domain ? `Cost: ${fmt(domain.costGems)} gems` : "Select a service to see gem cost.";
 }
 
-async function loadOrders() {
+async function createOrder(event) {
+  event.preventDefault();
+  const selected = serviceSelect.value;
+  if (!selected) return;
+
+  const submitBtn = orderForm.querySelector("button");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Ordering…";
+
   try {
-    const data = await api("/api/orders");
-    renderOrders(data.orders);
-    liveStatus.textContent = `Live · ${data.orders.length} SMS`;
-    liveStatus.className = "status-pill live";
+    const domain = domainList.find((d) => (d.name || d.domain) === selected);
+    const site = (domain.site || domain.name || domain.domain || "").trim();
+    const dom = (domain.domain || domain.name || "").trim();
+
+    if (!site) throw new Error("Invalid service: missing site identifier");
+    if (!dom) throw new Error("Invalid service: missing domain name");
+
+    await api("/api/orders", {
+      method: "POST",
+      body: JSON.stringify({ site, domain: dom }),
+    });
+    await loadOrders();
+    await loadWallet();
   } catch (err) {
     liveStatus.textContent = err.message;
     liveStatus.className = "status-pill error";
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Order now";
   }
 }
 
-async function loadHealth() {
-  try {
-    const health = await fetch("/api/health").then((res) => res.json());
-    refreshMs = health.pollIntervalMs || 2000;
-    updatePollDisplay(refreshMs);
-  } catch {}
-}
-
-function updatePollDisplay(ms) {
-  pollIntervalEl.textContent = fmtSeconds(ms);
-  if (pollIntervalMs) pollIntervalMs.textContent = fmtSeconds(ms);
-}
-
-async function loadConfig() {
-  try {
-    const configData = await fetch("/api/config").then((res) => res.json());
-    refreshMs = configData.pollIntervalMs || 2000;
-    updatePollDisplay(refreshMs);
-
-    if (configData.botUsername)
-      telegramLink.href = `https://t.me/${configData.botUsername}`;
-
-    await loadServices();
-  } catch (err) {
-    serviceSelect.innerHTML = '<option value="">Failed to load config</option>';
-    orderCostHint.textContent = "Config load error: " + err.message;
-  }
-}
-
-async function loadServices() {
-  // Load email domains
-  try {
-    const data = await api("/api/domains");
-    renderServices(data.domains);
-  } catch (err) {
-    serviceSelect.innerHTML =
-      '<option value="">Error loading services</option>';
-    serviceError.textContent = "Failed to load services: " + err.message;
-    serviceError.classList.remove("hidden");
-    orderCostHint.textContent =
-      "Could not load services. Check Hero-SMS API key.";
-  }
-
-  // Load SMS activation services first (needed to pick service before country)
-  try {
-    const smsData = await api("/api/sms-services");
-    renderSmsServices(smsData.services);
-    // Set the current country from API response
-    if (smsData.currentCountryId && smsCountrySelect) {
-      smsCountrySelect.dataset.currentCountryId = String(smsData.currentCountryId);
-    }
-  } catch (err) {
-    if (smsError) {
-      smsError.textContent = "SMS services unavailable: " + err.message;
-      smsError.classList.remove("hidden");
-    }
-  }
-
-  // Load SMS countries after services
-  try {
-    const cData = await fetch("/api/sms-countries").then((r) => r.json());
-    renderSmsCountries(cData.countries);
-  } catch (err) {
-    if (smsCountrySelect) {
-      smsCountrySelect.innerHTML = '<option value="">Failed to load countries</option>';
-    }
-    console.error("Failed to load SMS countries:", err);
-  }
-}
-
+// ── SMS Activation ─────────────────────────────────────────────────
 function renderSmsCountries(countries) {
   if (!smsCountrySelect) return;
   smsCountrySelect.innerHTML = '<option value="">All countries</option>';
@@ -339,51 +237,66 @@ function renderSmsCountries(countries) {
     console.warn("No SMS countries returned from API");
     return;
   }
+  smsCountryList = countries;
   countries.forEach((c) => {
     const opt = document.createElement("option");
     opt.value = c.id;
     opt.textContent = c.eng || c.rus || `Country ${c.id}`;
     smsCountrySelect.appendChild(opt);
   });
-  // Set current country if known from API response
-  if (smsCountrySelect.dataset.currentCountryId) {
-    smsCountrySelect.value = smsCountrySelect.dataset.currentCountryId;
+  if (smsSelectedCountry) {
+    smsCountrySelect.value = smsSelectedCountry;
   }
 }
 
 if (smsCountrySelect) {
   smsCountrySelect.addEventListener("change", async () => {
-    const countryId = smsCountrySelect.value;
-    // Preserve current service selection
-    const previousSelected = smsServiceSelect?.value || "";
-    try {
-      const url = countryId
-        ? `/api/sms-services?country=${countryId}`
-        : "/api/sms-services";
-      const data = await api(url);
-      if (data.currentCountryId)
-        smsCountrySelect.dataset.currentCountryId = String(data.currentCountryId);
-      if (data.services && data.services.length > 0) {
-        renderSmsServices(data.services);
-        // Restore previously selected service if it still exists
-        if (previousSelected && smsServiceList.some(s => s.code === previousSelected)) {
-          smsServiceSelect.value = previousSelected;
-        }
-      } else {
-        // Keep existing services, just show a hint
-        if (smsError) {
-          smsError.textContent = "No services available for selected country, showing all services.";
-          smsError.classList.remove("hidden");
-        }
-      }
-    } catch (err) {
-      // Don't clear existing services on error
-      if (smsError) {
-        smsError.textContent = "Failed to load services for country: " + err.message;
-        smsError.classList.remove("hidden");
-      }
+    smsSelectedCountry = smsCountrySelect.value;
+    if (smsSelectedCountry) {
+      await loadSmsPricesForCountry(smsSelectedCountry);
+    } else {
+      await loadSmsServices();
     }
   });
+}
+
+async function loadSmsPricesForCountry(countryId) {
+  smsServiceSelect.innerHTML = '<option value="">Loading prices...</option>';
+  smsServiceSelect.disabled = true;
+  smsSearchInput.placeholder = `Loading prices for country ${countryId}...`;
+  if (smsSummary) smsSummary.classList.add("hidden");
+  try {
+    const data = await api(`/api/sms-services?country=${countryId}`);
+    if (data.currentCountryId) {
+      smsSelectedCountry = String(data.currentCountryId);
+      smsCountrySelect.value = smsSelectedCountry;
+    }
+    renderSmsServices(data.services);
+  } catch (err) {
+    if (smsError) {
+      smsError.textContent = "Failed to load prices: " + err.message;
+      smsError.classList.remove("hidden");
+    }
+    smsServiceSelect.innerHTML = '<option value="">Error loading prices</option>';
+  } finally {
+    smsServiceSelect.disabled = false;
+  }
+}
+
+async function loadSmsServices() {
+  try {
+    const data = await api("/api/sms-services");
+    if (data.currentCountryId) {
+      smsSelectedCountry = String(data.currentCountryId);
+      smsCountrySelect.value = smsSelectedCountry;
+    }
+    renderSmsServices(data.services);
+  } catch (err) {
+    if (smsError) {
+      smsError.textContent = "SMS services unavailable: " + err.message;
+      smsError.classList.remove("hidden");
+    }
+  }
 }
 
 function renderSmsServices(services) {
@@ -391,6 +304,7 @@ function renderSmsServices(services) {
   smsServiceList = services || [];
   if (smsError) smsError.classList.add("hidden");
   if (smsResult) smsResult.textContent = "";
+  if (smsSummary) smsSummary.classList.add("hidden");
   populateSmsDropdown();
 
   if (smsSearchInput) {
@@ -407,19 +321,15 @@ function populateSmsDropdown(filter) {
   smsServiceSelect.innerHTML = '<option value="">Select a service...</option>';
 
   const filtered = query
-    ? smsServiceList.filter(
-        (s) =>
-          s.name.toLowerCase().includes(query) ||
-          s.code.toLowerCase().includes(query),
+    ? smsServiceList.filter((s) =>
+        s.name.toLowerCase().includes(query) || s.code.toLowerCase().includes(query)
       )
     : smsServiceList;
 
   if (!filtered.length) {
     const opt = document.createElement("option");
     opt.value = "";
-    opt.textContent = query
-      ? `No match for "${query}"`
-      : "No SMS services available";
+    opt.textContent = query ? `No match for "${query}"` : "No SMS services available";
     opt.disabled = true;
     smsServiceSelect.appendChild(opt);
     return;
@@ -428,8 +338,26 @@ function populateSmsDropdown(filter) {
   filtered.forEach((s) => {
     const opt = document.createElement("option");
     opt.value = s.code;
-    opt.textContent = `${s.name} — $${s.costUsd?.toFixed(2) || "?"} (stock: ${s.stock || "?"})`;
+    const price = s.costUsd ? `$${s.costUsd.toFixed(2)}` : "$?";
+    const stock = s.stock || "?";
+    opt.textContent = `${s.name} — ${price} (stock: ${stock})`;
     smsServiceSelect.appendChild(opt);
+  });
+}
+
+// Show summary when a service is selected
+if (smsServiceSelect) {
+  smsServiceSelect.addEventListener("change", () => {
+    const selected = smsServiceSelect.value;
+    if (!selected || !smsSummary) return;
+    const svc = smsServiceList.find(s => s.code === selected);
+    if (svc) {
+      const price = svc.costUsd ? `$${svc.costUsd.toFixed(2)}` : "Unknown";
+      const stock = svc.stock || "?";
+      const countryName = smsCountrySelect?.selectedOptions[0]?.textContent || "selected country";
+      smsSummary.innerHTML = `<strong>${svc.name}</strong> — ${price} · ${stock} numbers available · 🇲🇾 ${countryName}`;
+      smsSummary.classList.remove("hidden");
+    }
   });
 }
 
@@ -472,15 +400,12 @@ async function createSmsOrder(event) {
 
     if (smsResult) {
       smsResult.textContent = lines.join("\n");
-      // Create a check SMS button
       const checkBtn = document.createElement("button");
       checkBtn.type = "button";
       checkBtn.className = "btn-secondary";
       checkBtn.textContent = "🔄 Check SMS Code";
       checkBtn.dataset.activationId = result.activationId;
-      checkBtn.addEventListener("click", () =>
-        checkSmsCode(result.activationId),
-      );
+      checkBtn.addEventListener("click", () => checkSmsCode(result.activationId));
       smsResult.after(checkBtn);
     }
   } catch (err) {
@@ -514,24 +439,146 @@ async function checkSmsCode(activationId) {
   }
 }
 
-function updateOrderCostHint() {
-  const selected = serviceSelect.value;
-  if (!selected) {
-    orderCostHint.textContent = "Select a service to see gem cost.";
-    return;
-  }
-  const domain = domainList.find((d) => (d.name || d.domain) === selected);
-  if (domain) {
-    orderCostHint.textContent = `Cost: ${fmt(domain.costGems)} gems`;
-  } else {
-    orderCostHint.textContent = "Select a service to see gem cost.";
+// ── Orders ──────────────────────────────────────────────────────────
+function renderOrders(orders) {
+  ordersList.innerHTML = "";
+  orders.forEach((order) => {
+    const card = document.createElement("article");
+    card.className = `order-card${order.value ? " received" : ""}`;
+
+    const top = document.createElement("div");
+    top.className = "order-top";
+
+    const email = document.createElement("div");
+    email.className = "order-email";
+    email.textContent = order.email || `${order.domain || order.site} (pending)`;
+
+    const status = document.createElement("span");
+    status.className = `order-status${order.value ? " received" : ""}`;
+    status.textContent = order.value ? "RECEIVED" : order.status;
+
+    top.append(email, status);
+
+    const meta = document.createElement("div");
+    meta.className = "order-meta";
+    const gemsPart = order.gemsCharged ? ` · ${fmt(order.gemsCharged)} gems` : "";
+    meta.textContent = `#${order.id} · ${order.site || ""} · ${order.domain || ""}${gemsPart}`;
+
+    card.append(top, meta);
+
+    if (order.value) {
+      const value = document.createElement("div");
+      value.className = "order-value";
+      value.textContent = order.value;
+      card.appendChild(value);
+    }
+
+    if (order.message) {
+      const message = document.createElement("div");
+      message.className = "order-meta";
+      message.textContent = order.message;
+      card.appendChild(message);
+    }
+
+    if (!order.value && order.status !== "CANCELLED") {
+      const actions = document.createElement("div");
+      actions.className = "order-actions";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "cancel-btn";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", () => cancelOrder(order.id));
+      actions.appendChild(cancelBtn);
+      card.appendChild(actions);
+    }
+
+    ordersList.appendChild(card);
+  });
+  emptyState.classList.toggle("hidden", orders.length > 0);
+}
+
+async function loadOrders() {
+  try {
+    const data = await api("/api/orders");
+    renderOrders(data.orders);
+    liveStatus.textContent = `Live · ${data.orders.length} SMS`;
+    liveStatus.className = "status-pill live";
+  } catch (err) {
+    liveStatus.textContent = err.message;
+    liveStatus.className = "status-pill error";
   }
 }
 
+async function cancelOrder(id) {
+  try {
+    await api(`/api/orders/${id}`, { method: "DELETE" });
+    await loadOrders();
+    await loadWallet();
+  } catch (err) {
+    liveStatus.textContent = err.message;
+    liveStatus.className = "status-pill error";
+  }
+}
+
+// ── Health & Config ─────────────────────────────────────────────────
+async function loadHealth() {
+  try {
+    const health = await fetch("/api/health").then((res) => res.json());
+    refreshMs = health.pollIntervalMs || 2000;
+    updatePollDisplay(refreshMs);
+  } catch {}
+}
+
+function updatePollDisplay(ms) {
+  pollIntervalEl.textContent = fmtSeconds(ms);
+  if (pollIntervalMs) pollIntervalMs.textContent = fmtSeconds(ms);
+}
+
+async function loadConfig() {
+  try {
+    const configData = await fetch("/api/config").then((res) => res.json());
+    refreshMs = configData.pollIntervalMs || 2000;
+    updatePollDisplay(refreshMs);
+    if (configData.botUsername) telegramLink.href = `https://t.me/${configData.botUsername}`;
+    await loadServices();
+  } catch (err) {
+    serviceSelect.innerHTML = '<option value="">Failed to load config</option>';
+    orderCostHint.textContent = "Config load error: " + err.message;
+  }
+}
+
+async function loadServices() {
+  // Load email domains
+  try {
+    const data = await api("/api/domains");
+    renderServices(data.domains);
+  } catch (err) {
+    serviceSelect.innerHTML = '<option value="">Error loading services</option>';
+    serviceError.textContent = "Failed to load services: " + err.message;
+    serviceError.classList.remove("hidden");
+    orderCostHint.textContent = "Could not load services. Check Hero-SMS API key.";
+  }
+
+  // Load SMS countries first
+  try {
+    const cData = await fetch("/api/sms-countries").then((r) => r.json());
+    renderSmsCountries(cData.countries);
+  } catch (err) {
+    if (smsCountrySelect) smsCountrySelect.innerHTML = '<option value="">Failed to load countries</option>';
+    console.error("Failed to load SMS countries:", err);
+  }
+
+  // Load SMS services with default country
+  await loadSmsServices();
+}
+
+// ── Top-up ──────────────────────────────────────────────────────────
 async function runTopup(body) {
-  // Remove any previous QR image
+  lastPaymentId = null;
   const existingQr = document.querySelector(".payment-qr");
   if (existingQr) existingQr.remove();
+  if (topupConfirmSection) topupConfirmSection.classList.add("hidden");
+  if (confirmPaymentResult) confirmPaymentResult.textContent = "";
   topupResult.textContent = "Creating payment…";
   try {
     const result = await api("/api/topup", {
@@ -547,13 +594,17 @@ async function runTopup(body) {
         ...result.instructions,
         `Payment #${result.paymentId}`,
       ].join(" · ");
-      // Show QR image for manual payments if available
       if (result.qrUrl) {
         const qrImg = document.createElement("img");
         qrImg.src = result.qrUrl;
         qrImg.alt = "Payment QR code";
         qrImg.className = "payment-qr";
         topupResult.after(qrImg);
+      }
+      // Show confirmation section for manual payments
+      if (result.paymentId) {
+        lastPaymentId = result.paymentId;
+        if (topupConfirmSection) topupConfirmSection.classList.remove("hidden");
       }
     } else {
       topupResult.textContent = result.note || "Payment created.";
@@ -563,49 +614,82 @@ async function runTopup(body) {
   }
 }
 
-async function createOrder(event) {
-  event.preventDefault();
-  const selected = serviceSelect.value;
-  if (!selected) return;
+// Payment confirmation with proof
+if (confirmPaymentBtn) {
+  confirmPaymentBtn.addEventListener("click", async () => {
+    if (!lastPaymentId) {
+      if (confirmPaymentResult) confirmPaymentResult.textContent = "No payment to confirm.";
+      return;
+    }
+    const file = paymentProofInput?.files?.[0];
+    if (!file) {
+      if (confirmPaymentResult) confirmPaymentResult.textContent = "Please select a receipt/proof image to upload.";
+      return;
+    }
 
-  const submitBtn = orderForm.querySelector("button");
-  submitBtn.disabled = true;
-  submitBtn.textContent = "Ordering…";
-
-  try {
-    const domain = domainList.find((d) => (d.name || d.domain) === selected);
-    const site = (domain.site || domain.name || domain.domain || "").trim();
-    const dom = (domain.domain || domain.name || "").trim();
-
-    if (!site) throw new Error("Invalid service: missing site identifier");
-    if (!dom) throw new Error("Invalid service: missing domain name");
-
-    await api("/api/orders", {
-      method: "POST",
-      body: JSON.stringify({ site, domain: dom }),
-    });
-    await loadOrders();
-    await loadWallet();
-  } catch (err) {
-    liveStatus.textContent = err.message;
-    liveStatus.className = "status-pill error";
-  } finally {
-    submitBtn.disabled = false;
-    submitBtn.textContent = "Order now";
-  }
+    confirmPaymentBtn.disabled = true;
+    confirmPaymentBtn.textContent = "Sending...";
+    try {
+      // Convert file to base64
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = e.target.result.split(",")[1];
+        await api("/api/admin/submit-proof", {
+          method: "POST",
+          body: JSON.stringify({
+            paymentId: lastPaymentId,
+            proof: base64,
+            fileName: file.name,
+          }),
+        });
+        if (confirmPaymentResult) {
+          confirmPaymentResult.textContent = "✅ Payment proof submitted! Wait for admin approval. You'll receive gems after review.";
+          confirmPaymentResult.style.color = "#4ade80";
+        }
+        if (topupConfirmSection) topupConfirmSection.classList.add("hidden");
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      if (confirmPaymentResult) {
+        confirmPaymentResult.textContent = "Failed to send proof: " + err.message;
+        confirmPaymentResult.style.color = "#f87171";
+      }
+    } finally {
+      confirmPaymentBtn.disabled = false;
+      confirmPaymentBtn.textContent = "Send Payment Proof";
+    }
+  });
 }
 
-async function cancelOrder(id) {
-  try {
-    await api(`/api/orders/${id}`, { method: "DELETE" });
-    await loadOrders();
-    await loadWallet();
-  } catch (err) {
-    liveStatus.textContent = err.message;
-    liveStatus.className = "status-pill error";
+function updateCustomTopupHint() {
+  const amountMyr = parseFloat(customMyrInput.value);
+  if (!amountMyr || !wallet?.billplzFee) {
+    customMyrInput.setAttribute("placeholder", "Enter RM amount (min RM 5)");
+    return;
   }
+  const fee = amountMyr * wallet.billplzFee;
+  const total = amountMyr + fee;
+  customMyrInput.setAttribute("placeholder", `Enter RM amount (min RM 5) — total with fee: RM ${total.toFixed(2)}`);
 }
 
+customTopupBtn.addEventListener("click", () => {
+  const amountMyr = parseFloat(customMyrInput.value);
+  const method = topupMethodSelect.value;
+  if (!amountMyr || !method) return;
+  if (topupMethodSelect.options[0]?.disabled && topupMethodSelect.options[0]?.textContent.includes("Unavailable")) {
+    topupResult.textContent = "Top Up Temporarily Unavailable";
+    return;
+  }
+  if (amountMyr < 5) {
+    topupResult.textContent = "Minimum top-up is RM 5";
+    return;
+  }
+  runTopup({ method, amountMyr });
+});
+
+customMyrInput.addEventListener("input", updateCustomTopupHint);
+
+// ── Session & Auto-refresh ─────────────────────────────────────────
 async function initSession() {
   const inTelegram = initTelegramWebApp();
 
@@ -615,18 +699,13 @@ async function initSession() {
   }
 
   const savedToken = (() => {
-    try {
-      return sessionStorage.getItem(STORAGE_KEY);
-    } catch {
-      return null;
-    }
+    try { return sessionStorage.getItem(STORAGE_KEY); } catch { return null; }
   })();
   const query = savedToken ? `?token=${encodeURIComponent(savedToken)}` : "";
 
   const session = await fetch(`/api/session${query}`).then((res) => res.json());
   setToken(session.token);
   tokenInput.value = token;
-
   if (savedToken) tokenPanel.hidden = true;
 }
 
@@ -643,69 +722,23 @@ function startAutoRefresh() {
 
 orderForm.addEventListener("submit", createOrder);
 if (smsOrderForm) smsOrderForm.addEventListener("submit", createSmsOrder);
-refreshBtn.addEventListener("click", () => {
-  loadOrders();
-  loadWallet();
-});
+refreshBtn.addEventListener("click", () => { loadOrders(); loadWallet(); });
 serviceSelect.addEventListener("change", updateOrderCostHint);
 
 // ── Payment QR image style ──────────────────────────────────────
 const style = document.createElement("style");
 style.textContent = `
-  .payment-qr {
-    max-width: 250px;
-    width: 100%;
-    height: auto;
-    border-radius: 12px;
-    display: block;
-    margin: 12px 0;
-  }
-  .stat-helper {
-    font-size: 0.75rem;
-    color: var(--muted);
-    margin-top: 2px;
-  }
-  .error-hint {
-    color: #ff6b6b;
-    font-size: 0.8rem;
-  }
+  .payment-qr { max-width: 250px; width: 100%; height: auto; border-radius: 12px; display: block; margin: 12px 0; }
+  .stat-helper { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .error-hint { color: #ff6b6b; font-size: 0.8rem; }
+  .sms-summary { background: var(--surface-strong); border-radius: 10px; padding: 10px 14px; margin-top: 10px; font-size: 0.9rem; color: var(--accent); }
+  .topup-confirm { margin-top: 12px; padding: 14px; background: var(--surface-strong); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .topup-confirm input[type="file"] { color: var(--text); font: inherit; font-size: 0.85rem; padding: 8px 0; }
+  .topup-confirm .confirm-btn { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #000; font-weight: 700; }
 `;
 document.head.appendChild(style);
 
-function updateCustomTopupHint() {
-  const amountMyr = parseFloat(customMyrInput.value);
-  if (!amountMyr || !wallet?.billplzFee) {
-    customMyrInput.setAttribute("placeholder", "Enter RM amount (min RM 5)");
-    return;
-  }
-  const fee = amountMyr * wallet.billplzFee;
-  const total = amountMyr + fee;
-  customMyrInput.setAttribute(
-    "placeholder",
-    `Enter RM amount (min RM 5) — total with fee: RM ${total.toFixed(2)}`,
-  );
-}
-
-customTopupBtn.addEventListener("click", () => {
-  const amountMyr = parseFloat(customMyrInput.value);
-  const method = topupMethodSelect.value;
-  if (!amountMyr || !method) return;
-  if (
-    topupMethodSelect.options[0]?.disabled &&
-    topupMethodSelect.options[0]?.textContent.includes("Unavailable")
-  ) {
-    topupResult.textContent = "Top Up Temporarily Unavailable";
-    return;
-  }
-  if (amountMyr < 5) {
-    topupResult.textContent = "Minimum top-up is RM 5";
-    return;
-  }
-  runTopup({ method, amountMyr });
-});
-
-customMyrInput.addEventListener("input", updateCustomTopupHint);
-
+// ── Token save ──────────────────────────────────────────────────
 tokenSave.addEventListener("click", async () => {
   const value = tokenInput.value.trim();
   if (!value) return;
@@ -715,9 +748,7 @@ tokenSave.addEventListener("click", async () => {
     await loadOrders();
     startAutoRefresh();
   } catch {
-    try {
-      sessionStorage.removeItem(STORAGE_KEY);
-    } catch {}
+    try { sessionStorage.removeItem(STORAGE_KEY); } catch {}
     liveStatus.textContent = "Invalid token";
     liveStatus.className = "status-pill error";
   }
@@ -727,7 +758,6 @@ initSession()
   .then(loadConfig)
   .then(loadHealth)
   .then(() => {
-    // Clean token from URL if present (security: don't expose in browser history)
     const url = new URL(window.location.href);
     if (url.searchParams.has("token")) {
       url.searchParams.delete("token");
@@ -742,7 +772,7 @@ initSession()
     liveStatus.className = "status-pill error";
   });
 
-// ── Confirmation modal (misclick prevention) ────────────────────
+// ── Confirmation modal ──────────────────────────────────────────
 let pendingAction = null;
 
 function showConfirm(message, onConfirm) {
@@ -753,11 +783,7 @@ function showConfirm(message, onConfirm) {
 
 document.getElementById("confirm-yes").addEventListener("click", () => {
   document.getElementById("confirm-modal").style.display = "none";
-  if (pendingAction) {
-    const fn = pendingAction;
-    pendingAction = null;
-    fn();
-  }
+  if (pendingAction) { const fn = pendingAction; pendingAction = null; fn(); }
 });
 
 document.getElementById("confirm-no").addEventListener("click", () => {
@@ -765,7 +791,6 @@ document.getElementById("confirm-no").addEventListener("click", () => {
   pendingAction = null;
 });
 
-// Close modal on overlay click
 document.getElementById("confirm-modal").addEventListener("click", (e) => {
   if (e.target === e.currentTarget) {
     document.getElementById("confirm-modal").style.display = "none";
@@ -802,6 +827,7 @@ function renderAdminPayments(payments) {
         <span class="order-status">PENDING</span>
       </div>
       <div class="order-meta">RM ${p.amountMyr} → ${p.gems.toLocaleString()} gems · User: ${p.telegramId || p.userId}</div>
+      ${p.proof ? `<div class="order-meta">📎 Proof attached</div>` : ""}
       <div class="order-actions">
         <button type="button" class="approve-btn" data-id="${p.id}">✅ Approve</button>
         <button type="button" class="reject-btn" data-id="${p.id}">❌ Reject</button>
@@ -843,20 +869,13 @@ async function adminAction(action, paymentId) {
 
 refreshAdminBtn.addEventListener("click", loadAdminPendingPayments);
 
-// Try to load admin panel after wallet loads
 const origLoadWallet = loadWallet;
 loadWallet = async function () {
   const w = await api("/api/wallet");
   renderWallet(w);
-  // Try loading admin panel silently
   loadAdminPendingPayments().catch(() => {});
 };
 
-if (
-  window.location.hash === "#topup" ||
-  new URLSearchParams(window.location.search).get("topup")
-) {
-  document
-    .getElementById("topup-panel")
-    ?.scrollIntoView({ behavior: "smooth" });
+if (window.location.hash === "#topup" || new URLSearchParams(window.location.search).get("topup")) {
+  document.getElementById("topup-panel")?.scrollIntoView({ behavior: "smooth" });
 }

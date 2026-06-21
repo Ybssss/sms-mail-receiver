@@ -177,24 +177,31 @@ async function getPrices(service, country) {
     return Array.isArray(result.data) ? result.data : [];
   }
 
-  // Maybe it's already a plain object (JSON parsed by the request handler)
+  // Plain object. API format: {"7": {"sp": {"cost":0.05,"count":100}, ...}}
+  // Top-level key is country ID; inner object maps service codes to price data.
   if (typeof result === "object" && result !== null && !Array.isArray(result)) {
-    console.log("[DEBUG] getPrices returned plain object, keys:", Object.keys(result).length);
+    const keys = Object.keys(result);
+    console.log("[DEBUG] getPrices returned plain object, keys:", keys.length);
+    // Determine if the first value looks like a nested price map
+    const firstVal = result[keys[0]];
+    if (firstVal && typeof firstVal === "object" && !Array.isArray(firstVal)) {
+      const innerKeys = Object.keys(firstVal);
+      if (innerKeys.length > 0 && firstVal[innerKeys[0]] && typeof firstVal[innerKeys[0]] === "object" && firstVal[innerKeys[0]].cost !== undefined) {
+        // Nested format: result is {countryId: {serviceCode: {cost, count}}}
+        console.log("[DEBUG] getPrices detected nested country->service format, inner keys:", innerKeys.length);
+        const prices = [];
+        for (const [code, data] of Object.entries(firstVal)) {
+          prices.push({ [code]: { cost: Number(data.cost || 0), count: Number(data.count || 0), physicalCount: Number(data.physicalCount || 0) } });
+        }
+        return prices;
+      }
+    }
+    // Flat format: {serviceCode: {cost, count, ...}}
+    console.log("[DEBUG] getPrices treating as flat service->price format");
     const prices = [];
     for (const [code, data] of Object.entries(result)) {
-      if (typeof data === "object" && data !== null) {
-        let cost = data[code] || data.cost;
-        if (cost === undefined || cost === null) {
-          for (const [k, v] of Object.entries(data)) {
-            if (k !== "count" && k !== "physicalCount" && typeof v === "string" && !isNaN(Number(v))) {
-              cost = v;
-              break;
-            }
-          }
-        }
-        const count = data.count ?? 0;
-        const physicalCount = data.physicalCount ?? 0;
-        prices.push({ [code]: { cost: Number(cost || 0), count: Number(count), physicalCount: Number(physicalCount) } });
+      if (typeof data === "object" && data !== null && data.cost !== undefined) {
+        prices.push({ [code]: { cost: Number(data.cost || 0), count: Number(data.count || 0), physicalCount: Number(data.physicalCount || 0) } });
       }
     }
     if (prices.length > 0) return prices;

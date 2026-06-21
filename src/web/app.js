@@ -637,6 +637,46 @@ function createWebApp() {
     }
   });
 
+  app.post("/api/admin/submit-proof", async (req, res) => {
+    // This endpoint is public (any authenticated user can submit proof for their payment)
+    const { paymentId, proof, fileName } = req.body || {};
+    if (!paymentId || !proof) {
+      res.status(400).json({ error: "paymentId and proof (base64) required" });
+      return;
+    }
+    try {
+      const { getDb } = require("../db/database");
+      const db = getDb();
+      // Verify the payment belongs to this user
+      const payment = db.prepare("SELECT * FROM payments WHERE id = ? AND userId = ?").get(paymentId, req.user.id);
+      if (!payment) {
+        res.status(404).json({ error: "Payment not found" });
+        return;
+      }
+      // Store proof as base64 in the payment meta or a separate column
+      const existingMeta = payment.meta ? JSON.parse(payment.meta) : {};
+      existingMeta.proof = proof;
+      existingMeta.proofFileName = fileName || "";
+      db.prepare("UPDATE payments SET meta = ?, status = 'pending_review' WHERE id = ?")
+        .run(JSON.stringify(existingMeta), paymentId);
+      
+      // Notify admin via Telegram about new proof submission
+      try {
+        const { bot } = require("../bot/telegram");
+        if (bot && config.adminTelegramIds.length > 0) {
+          const msg = `📸 New payment proof submitted!\nPayment #${paymentId}\nUser: ${req.user.telegramId || req.user.id}\nAmount: RM ${payment.amountMyr}\nGems: ${payment.gems}\n\nUse /approve to review.`;
+          for (const adminId of config.adminTelegramIds) {
+            bot.telegram.sendMessage(adminId, msg).catch(() => {});
+          }
+        }
+      } catch {}
+
+      res.json({ ok: true, message: "Proof submitted for admin review" });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/admin/reject-payment", async (req, res) => {
     if (!isAdminUser(req)) {
       res.status(403).json({ error: "Admin only" });

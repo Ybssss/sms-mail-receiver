@@ -71,6 +71,12 @@
           <button type="button" id="custom-topup-btn">Top up</button>
         </div>
         <p class="hint" id="topup-result"></p>
+        <div id="topup-confirm-section" class="topup-confirm hidden">
+          <p class="hint" style="margin:0;color:#fbbf24;">📸 Upload payment receipt to confirm</p>
+          <input id="payment-proof-input" type="file" accept="image/*" />
+          <button type="button" id="confirm-payment-btn" class="confirm-btn">Send Payment Proof</button>
+          <p class="hint" id="confirm-payment-result"></p>
+        </div>
         <p class="hint hidden" id="processing-fee-hint">
           * A 3.5% processing fee is added for Billplz payments (FPX, Card, TnG,
           GrabPay).
@@ -94,32 +100,31 @@
       <section class="panel">
         <h2>📱 SMS Activation</h2>
         <p class="hint">
-          Services like Shopee, Lazada, KFC, Grab, McDonald's, and more.
+          Choose country → service with prices → order SMS number
         </p>
+        <div class="sms-country-row">
+          <label for="sms-country-select" class="country-label">🌍 Country:</label>
+          <select id="sms-country-select" aria-label="Select SMS country">
+            <option value="">Loading countries...</option>
+          </select>
+        </div>
         <input
           id="sms-service-search"
           type="text"
           placeholder="Search SMS services..."
-          class="hidden-input"
+          autocomplete="off"
         />
+        <div id="sms-summary" class="sms-summary hidden"></div>
         <form id="sms-order-form" class="order-form">
           <select
             id="sms-service-select"
             aria-label="Select SMS service"
             required
           >
-            <option value="">Loading SMS services...</option>
+            <option value="">Select a service...</option>
           </select>
           <button type="submit">Order SMS</button>
         </form>
-        <div class="sms-country-row">
-          <label for="sms-country-select" class="country-label"
-            >🌍 Country:</label
-          >
-          <select id="sms-country-select" aria-label="Select SMS country">
-            <option value="">Loading countries...</option>
-          </select>
-        </div>
         <p class="hint" id="sms-result"></p>
         <p class="hint error-hint hidden" id="sms-error"></p>
       </section>

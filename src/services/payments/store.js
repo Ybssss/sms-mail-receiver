@@ -101,7 +101,7 @@ function listPendingManualPayments({ limit = 50 } = {}) {
       `
       SELECT p.*, u.telegram_id FROM payments p
       JOIN users u ON u.id = p.user_id
-      WHERE p.provider IN ('manual_tng', 'manual_bank') AND p.status = 'pending'
+      WHERE p.provider IN ('manual_tng', 'manual_bank') AND p.status IN ('pending', 'pending_review')
       ORDER BY p.id ASC LIMIT ?
     `,
     )
