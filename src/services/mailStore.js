@@ -131,6 +131,23 @@ async function saveOrder(userId, order, { gemsCharged } = {}) {
   return mapOrder(newOrder);
 }
 
+function isWaiting(order) {
+  if (!order) return false;
+  return WAIT_STATUSES.has(order.status) && !order.value;
+}
+
+async function listWaitingOrders() {
+  const d = getDb();
+  const statuses = Array.from(WAIT_STATUSES);
+  const rows = await d.collection("email_orders")
+    .find({ status: { $in: statuses } })
+    .sort({ created_at: 1 })
+    .toArray();
+
+  // Filter for those without a received value
+  return rows.filter(row => !row.value).map(mapOrder);
+}
+
 async function listOrders(userId, { limit = 100 } = {}) {
   const d = getDb();
   const rows = await d.collection("email_orders")
@@ -183,4 +200,6 @@ module.exports = {
   getOrderById,
   formatOrder,
   formatOrderList,
+  isWaiting,
+  listWaitingOrders,
 };
