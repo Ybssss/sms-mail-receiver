@@ -22,7 +22,16 @@ async function findUserByToken(token) {
 async function getOrCreateTelegramUser(telegramId) {
   const d = getDb();
   const existing = await findUserByTelegramId(telegramId);
-  if (existing) return existing;
+
+  // Merge any anonymous web users that have gems into this Telegram user
+  // Runs for both new AND existing users (since existing users may have topped up via web)
+  await mergeWebUserBalance(telegramId);
+
+  if (existing) {
+    // Re-read balance after merge
+    const updated = await findUserByTelegramId(telegramId);
+    return updated || existing;
+  }
 
   const token = generateToken();
   const now = new Date().toISOString();
@@ -33,10 +42,20 @@ async function getOrCreateTelegramUser(telegramId) {
     created_at: now,
   });
 
-  const newUser = mapUser({ _id: result.insertedId, telegram_id: String(telegramId), access_token: token, gems_balance: 0, created_at: now });
+  // Re-merge after creating (captures race condition where web user was created between our two merge runs)
+  await mergeWebUserBalance(telegramId);
 
-  // Merge any anonymous web users that have gems
+  const finalUser = await findUserByTelegramId(telegramId);
+  return finalUser || mapUser({ _id: result.insertedId, telegram_id: String(telegramId), access_token: token, gems_balance: 0, created_at: now });
+}
+
+async function mergeWebUserBalance(telegramId) {
+  const d = getDb();
   try {
+    const tgUser = await d.collection("users").findOne({ telegram_id: String(telegramId) });
+    if (!tgUser) return; // No telegram user yet — will merge after creation
+
+    const tgUserId = tgUser._id.toString();
     const webUsers = await d.collection("users").find({
       telegram_id: null,
       gems_balance: { $gt: 0 },
@@ -44,40 +63,43 @@ async function getOrCreateTelegramUser(telegramId) {
 
     for (const wu of webUsers) {
       if (wu.gems_balance > 0) {
-        console.log(`[MERGE] Moving ${wu.gems_balance} gems from web user ${wu._id} to Telegram user ${telegramId}`);
+        console.log(`[MERGE] Moving ${wu.gems_balance} gems from web user ${wu._id} to TG user ${telegramId}`);
+        const now = new Date().toISOString();
+
         // Credit gems to Telegram user
         await d.collection("users").updateOne(
-          { _id: result.insertedId },
+          { _id: tgUser._id },
           { $inc: { gems_balance: wu.gems_balance } }
         );
-        // Insert transaction records
+
+        // Get updated balance for transaction record
+        const updatedTg = await d.collection("users").findOne({ _id: tgUser._id });
         await d.collection("gem_transactions").insertOne({
-          user_id: newUser.id,
+          user_id: tgUserId,
           amount: wu.gems_balance,
           type: "merge",
           ref_id: wu._id.toString(),
-          balance_after: (newUser.gemsBalance || 0) + wu.gems_balance,
+          balance_after: updatedTg?.gems_balance || 0,
           note: `Merged from web user #${wu._id.toString().slice(-6)}`,
           created_at: now,
         });
+
         // Zero out web user
         await d.collection("users").updateOne(
           { _id: wu._id },
           { $set: { gems_balance: 0 } }
         );
-        // Update payments to point to new user
+
+        // Reassign payments to Telegram user
         await d.collection("payments").updateMany(
           { user_id: wu._id.toString() },
-          { $set: { user_id: newUser.id } }
+          { $set: { user_id: tgUserId } }
         );
-        newUser.gemsBalance = (newUser.gemsBalance || 0) + wu.gems_balance;
       }
     }
   } catch (e) {
     console.error("[MERGE] Failed to merge web users:", e.message);
   }
-
-  return newUser;
 }
 
 async function getOrCreateWebUser(token) {
