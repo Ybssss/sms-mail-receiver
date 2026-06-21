@@ -85,6 +85,15 @@ async function authFromTelegram() {
     console.log("[AUTH] No Telegram initData available — not in Telegram WebView");
     return false;
   }
+  console.log("[AUTH] Attempting Telegram auth, initData length:", tgWebApp.initData.length);
+  console.log("[AUTH] initData preview (first 200 chars):", tgWebApp.initData.substring(0, 200));
+  console.log("[AUTH] initDataUnsafe:", JSON.stringify({ 
+    hasUser: !!tgWebApp.initDataUnsafe?.user,
+    userId: tgWebApp.initDataUnsafe?.user?.id,
+    firstName: tgWebApp.initDataUnsafe?.user?.first_name,
+    language_code: tgWebApp.initDataUnsafe?.user?.language_code
+  }));
+  
   try {
     const response = await fetch("/api/telegram-auth", {
       method: "POST",
@@ -92,14 +101,18 @@ async function authFromTelegram() {
       body: tgWebApp.initData,
     });
     
+    console.log("[AUTH] Server response status:", response.status);
+    
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
       console.error("[AUTH] Telegram auth failed:", response.status, errData.error || response.statusText);
+      console.log("[AUTH] Error details:", JSON.stringify(errData));
       return false;
     }
 
     const data = await response.json();
     console.log("[AUTH] Telegram auth success, user:", data.telegramId, data.firstName);
+    console.log("[AUTH] Received token:", data.token ? data.token.substring(0, 8) + "..." : "NONE");
     setToken(data.token);
     tokenPanel.hidden = true;
 
@@ -109,7 +122,7 @@ async function authFromTelegram() {
     }
     return true;
   } catch (e) {
-    console.error("[AUTH] Telegram auth network error:", e.message);
+    console.error("[AUTH] Telegram auth network error:", e.message, e.stack);
     return false;
   }
 }

@@ -41,11 +41,11 @@ async function createTopup(userId, { method, packageId, amountMyr }) {
     if (!amountMyr || amountMyr < config.minTopupMyr) {
       throw new Error(`Minimum top-up is RM ${config.minTopupMyr}`);
     }
-    const { paymentId, gems, instructions } = await startManualTopup(userId, {
+    const { paymentId, gems, instructions, qrUrl } = await startManualTopup(userId, {
       provider: method,
       amountMyr,
     });
-    return { paymentId, gems, instructions };
+    return { paymentId, gems, instructions, qrUrl };
   }
 
   // Package-based topup

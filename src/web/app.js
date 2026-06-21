@@ -92,7 +92,7 @@ async function createWebApp() {
           ],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           imgSrc: ["'self'", "data:"],
-          connectSrc: ["'self'", "https://sms-mail-receiver.onrender.com", "wss://sms-mail-receiver.onrender.com"],
+          connectSrc: ["'self'", "https:", "wss:"],
           frameAncestors: ["'self'", "https://telegram.org"],
         },
       },
@@ -210,14 +210,26 @@ async function createWebApp() {
         return;
       }
 
+      // Detailed pre-validation logging
+      try {
+        const tempParams = new URLSearchParams(initData);
+        console.log("[AUTH] initData params: hash present =", !!tempParams.get("hash"),
+          ", user present =", !!tempParams.get("user"),
+          ", auth_date =", tempParams.get("auth_date") || "MISSING",
+          ", total keys =", [...tempParams.keys()].length);
+      } catch (e) {
+        console.log("[AUTH] initData parse error:", e.message);
+      }
+
       const parsed = validateInitData(initData);
       if (!parsed) {
-        console.log("[AUTH] initData validation FAILED — hash mismatch or expired");
+        console.log("[AUTH] initData validation FAILED — hash mismatch or expired (bot token configured:", !!config.botToken, ")");
         res.status(401).json({ error: "Invalid Telegram session" });
         return;
       }
 
-      console.log("[AUTH] Validated Telegram user:", parsed.user.id, "first_name:", parsed.user.first_name);
+      console.log("[AUTH] Validated Telegram user:", parsed.user.id, "first_name:", parsed.user.first_name,
+        "language_code:", parsed.user.language_code || "none");
       const user = getOrCreateTelegramUser(parsed.user.id);
       res.json({
         token: user.accessToken,
