@@ -35,12 +35,16 @@ const {
 const { listPendingManualPayments } = require("../services/payments/store");
 const { buildStarsPayload } = require("../services/payments/telegramStars");
 const {
+  getDb,
   isUserBlocked,
   blockUser,
   unblockUser,
   listBlockedUsers,
   saveUserPreference,
   getUserPreferences,
+  saveChatHistory,
+  getChatHistory,
+  getUserByTelegramId,
 } = require("../db/database");
 
 const LANG = {
@@ -225,15 +229,77 @@ function replyKeyboard(token, userId) {
   return Markup.keyboard(rows).resize();
 }
 
+// ── Admin helper functions ────────────────────────────────────
+async function handleAdminPending(ctx) {
+  const d = getDb();
+  const pending = await d
+    .collection("payments")
+    .aggregate([
+      {
+        $match: {
+          provider: { $in: ["manual_tng", "manual_bank"] },
+          status: { $in: ["pending", "pending_review"] },
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "user_id",
+          foreignField: "telegram_id",
+          as: "u",
+        },
+      },
+      { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+      { $sort: { _id: 1 } },
+      { $limit: 20 },
+    ])
+    .toArray();
+  if (!pending.length) {
+    await ctx.reply("No pending manual payments.");
+    return;
+  }
+  for (const p of pending) {
+    const id = p._id.toString();
+    const caption =
+      `📋 #${id.slice(-6)} · RM ${p.amount_myr} → ${formatGems(p.gems)} · ${p.provider}\n` +
+      `👤 ${p.u?.telegram_id || p.user_id}` +
+      (p.status === "pending_review" ? " 📎" : "");
+    await ctx.reply(caption, {
+      reply_markup: Markup.inlineKeyboard([
+        [
+          Markup.button.callback("✅ Approve", `admin_approve_${id}`), // 改为带确认的流程
+          Markup.button.callback("❌ Reject", `confirm_reject_${id}`),
+        ],
+      ]),
+    });
+  }
+}
+
+async function handleAdminUsers(ctx) {
+  const d = getDb();
+  const users = await d
+    .collection("users")
+    .find()
+    .sort({ created_at: -1 })
+    .limit(10)
+    .toArray();
+  if (!users.length) {
+    await ctx.reply("No users.");
+    return;
+  }
+  const lines = users.map(
+    (u, i) =>
+      `#${i + 1} ID: ...${u._id.toString().slice(-6)} | 💎 ${formatGems(u.gems_balance || 0)} | ${u.telegram_id ? "TG:" + u.telegram_id : "Web"}`,
+  );
+  await ctx.reply(`👥 Recent users:\n${lines.join("\n")}`);
+}
+
 // ── Admin keyboard ─────────────────────────────────────────────
 function adminReplyKeyboard(token, userId) {
   const appUrl = webAppUrl(token);
-  const base = replyKeyboard(token, userId).reply_markup; // 保留用户键盘
-  // 在用户键盘基础上追加一行管理员按钮
-  const extraRow = [
-    Markup.button.callback("📋 Pending Payments", "admin_pending"),
-    Markup.button.callback("👥 Users", "admin_users"),
-  ];
+  const base = replyKeyboard(token, userId).reply_markup;
+  // 使用文本按钮（回复键盘不支持 callback）
+  const extraRow = ["📋 Pending Payments", "👥 Users"];
   const keyboard = base.keyboard ? [...base.keyboard, extraRow] : [extraRow];
   return Markup.keyboard(keyboard).resize();
 }
@@ -274,29 +340,70 @@ async function formatBalance(userId, lang) {
   );
 }
 
+// ── User info formatter ──────────────────────────────────────
+function formatUserInfo(user) {
+  const parts = [];
+  if (user.first_name) parts.push(user.first_name);
+  if (user.last_name) parts.push(user.last_name);
+  const name = parts.join(" ") || "Unknown";
+  const username = user.username ? `@${user.username}` : "no username";
+  return `${name} (${username}) · ID: ${user.id}`;
+}
+
+function formatUserInfoFromDb(userDoc) {
+  const name = userDoc.name || userDoc.first_name || "Unknown";
+  const username = userDoc.username ? `@${userDoc.username}` : "no username";
+  const id = userDoc.telegram_id || userDoc._id?.toString() || "?";
+  return `${name} (${username}) · ID: ${id}`;
+}
+
 async function forwardToAdmins(bot, ctx) {
   if (!config.adminTelegramIds.length) return;
   const user = ctx.from;
   const msg = ctx.message;
   if (!msg || !msg.text) return;
+
+  // ── 1. 保存聊天历史 ─────────────────────────────────────────
+  try {
+    await saveChatHistory(user.id, msg.text, "incoming");
+  } catch (e) {
+    console.error("Failed to save chat history:", e.message);
+  }
+
+  // ── 2. 回复用户 ─────────────────────────────────────────────
+  try {
+    await ctx.reply(
+      "📨 Your message has been forwarded to admin. They will reply shortly.",
+    );
+  } catch {}
+
+  // ── 3. 格式化用户信息（包含 username）─────────────────────
+  const userDisplay = formatUserInfo(user);
   const replyCode =
     "usr_" +
     (user.id % 100000).toString(36) +
     "_" +
     (Date.now() % 100000).toString(36);
-  const text = `📩 #${user.first_name || "User"} ${user.last_name || ""} (ID: ${user.id})\nChatID: ${user.id}\nCode: #${replyCode}\n\nMessage: ${msg.text}`;
+
+  const text = [
+    `📩 New message from:`,
+    `👤 ${userDisplay}`,
+    `🆔 ${user.id}`,
+    `📝 Message: ${msg.text}`,
+    `🔗 Code: #${replyCode}`,
+  ].join("\n");
+
   const kb = Markup.inlineKeyboard([
     [
-      Markup.button.callback(
-        "✅ Done Reply",
-        `admin_reply_${user.id}_${replyCode}`,
-      ),
+      Markup.button.callback("💬 Reply", `admin_reply_${user.id}_${replyCode}`),
+      Markup.button.callback("📜 History", `admin_history_${user.id}`),
     ],
     [
-      Markup.button.callback("🚫 Block User", `admin_block_${user.id}`),
+      Markup.button.callback("🚫 Block", `admin_block_${user.id}`),
       Markup.button.callback("🔓 Unblock", `admin_unblock_${user.id}`),
     ],
   ]);
+
   for (const adminId of config.adminTelegramIds) {
     try {
       await bot.telegram.sendMessage(adminId, text, kb);
@@ -393,6 +500,24 @@ function createBot() {
   });
   bot.hears(/^(❓ Help|帮助)$/, async (ctx) => {
     await ctx.reply(t(getUserLang(ctx.from?.id), "help"));
+  });
+
+  // ── Admin: keyboard button handlers ──────────────────────────
+  bot.hears("📋 Pending Payments", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only.");
+      return;
+    }
+    // 复用 admin_pending 逻辑
+    await handleAdminPending(ctx);
+  });
+
+  bot.hears("👥 Users", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only.");
+      return;
+    }
+    await handleAdminUsers(ctx);
   });
 
   // ── Balance ──────────────────────────────────────────────────
@@ -605,12 +730,51 @@ function createBot() {
       await ctx.reply(caption, {
         reply_markup: Markup.inlineKeyboard([
           [
-            Markup.button.callback("✅ Approve", `confirm_approve_${id}`),
+            Markup.button.callback("✅ Approve", `admin_approve_${id}`), // ✅ 带确认
             Markup.button.callback("❌ Reject", `confirm_reject_${id}`),
           ],
         ]),
       });
     }
+  });
+
+  // ── Admin: approve with confirmation from pending list ──────
+  bot.action(/^admin_approve_(\w+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!isAdmin(ctx.from.id)) return;
+    const id = ctx.match[1];
+    const d = getDb();
+    const { ObjectId } = require("mongodb");
+    const payment = await d
+      .collection("payments")
+      .findOne({ _id: new ObjectId(String(id)) });
+    if (!payment) {
+      await ctx.reply("Payment not found.");
+      return;
+    }
+    // 显示确认对话框
+    await ctx.reply(
+      `⚠️ *Confirm Approve*\n\n` +
+        `Payment #${id.slice(-6)}\n` +
+        `💰 RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems\n` +
+        `👤 ${payment.user_id}\n\n` +
+        `This will credit the user's account.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: Markup.inlineKeyboard([
+          [
+            Markup.button.callback("✅ Confirm", `confirm_approve_${id}`),
+            Markup.button.callback("❌ Cancel", `admin_approve_cancel_${id}`),
+          ],
+        ]),
+      },
+    );
+  });
+
+  // 取消批准
+  bot.action(/^admin_approve_cancel_(\w+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText("❌ Approval cancelled.");
   });
 
   bot.action("admin_users", async (ctx) => {
@@ -725,8 +889,11 @@ function createBot() {
       return;
     }
     try {
+      // ── 保存管理员回复到聊天历史 ─────────────────────────────
+      await saveChatHistory(userId, msgText, "outgoing", ctx.from.id);
+
       await bot.telegram.sendMessage(userId, `📩 Admin reply: ${msgText}`);
-      await ctx.reply("Reply sent ✅");
+      await ctx.reply("✅ Reply sent and saved.");
     } catch (err) {
       await ctx.reply(`Failed: ${err.message}`);
     }
@@ -791,7 +958,9 @@ function createBot() {
       }
       const lines = users.map((u, i) => {
         const uid = u._id ? u._id.toString().slice(-6) : "?";
-        return `#${skip + i + 1} ID: ...${uid} | 💎 ${formatGems(u.gems_balance || 0)} | ${u.telegram_id ? "TG:" + u.telegram_id : "Web"}`;
+        const username = u.username ? `@${u.username}` : "";
+        const name = u.name || u.first_name || "";
+        return `#${skip + i + 1} ${name} ${username} (ID: ${u.telegram_id || "Web"}) | 💎 ${formatGems(u.gems_balance || 0)}`;
       });
       await ctx.reply(
         `Users (page ${page}):\n${lines.join("\n")}\n\nUse /user <telegram_id> for details`,
@@ -820,22 +989,155 @@ function createBot() {
         await ctx.reply("User not found.");
         return;
       }
-      const userId = user._id.toString();
-      const [orders, payments] = await Promise.all([
+
+      const userId = user._id;
+      const [orders, payments, chatCount] = await Promise.all([
         d.collection("email_orders").countDocuments({ user_id: userId }),
         d
           .collection("payments")
           .countDocuments({ user_id: userId, status: "paid" }),
+        d.collection("chat_history").countDocuments({
+          $or: [{ user_id: userId }, { telegram_id: String(tgId) }],
+        }),
       ]);
+
+      const username = user.username ? `@${user.username}` : "Not set";
+      const name =
+        [user.first_name, user.last_name].filter(Boolean).join(" ") || "N/A";
+
       await ctx.reply(
         [
-          `👤 User: ${user.telegram_id || "Web only"}`,
-          `🆔 DB ID: #usr_${userId.slice(-8)}`,
+          `👤 *User Details*`,
+          `📛 Name: ${name}`,
+          `🔖 Username: ${username}`,
+          `🆔 Telegram ID: ${user.telegram_id || "Web only"}`,
+          `📅 Joined: ${user.created_at || "N/A"}`,
           `💎 Balance: ${formatGems(user.gems_balance || 0)}`,
           `📧 Orders: ${orders}`,
           `💰 Payments: ${payments}`,
-          `📅 Joined: ${user.created_at || "N/A"}`,
+          `💬 Chat messages: ${chatCount}`,
+          `📜 View chat history: /history ${tgId}`,
         ].join("\n"),
+        { parse_mode: "Markdown" },
+      );
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
+  });
+
+  // ── Admin: view user chat history ────────────────────────────
+  bot.command("history", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only.");
+      return;
+    }
+    const args = ctx.message.text
+      .replace(/^\/history\s*/i, "")
+      .trim()
+      .split(/\s+/);
+    const userId = parseInt(args[0], 10);
+    const limit = parseInt(args[1], 10) || 20;
+
+    if (!userId) {
+      await ctx.reply(
+        "Usage: /history <user_id> [limit]\nExample: /history 123456789 10",
+      );
+      return;
+    }
+
+    try {
+      const history = await getChatHistory(userId, { limit });
+      if (!history.length) {
+        await ctx.reply(`No chat history for user ${userId}.`);
+        return;
+      }
+
+      // 获取用户信息
+      let userInfo = `ID: ${userId}`;
+      try {
+        const userDoc = await getUserByTelegramId(userId);
+        if (userDoc) {
+          const name = userDoc.name || userDoc.first_name || "Unknown";
+          const username = userDoc.username ? `@${userDoc.username}` : "";
+          userInfo = `${name} ${username}`;
+        }
+      } catch {}
+
+      const lines = history.map((h) => {
+        const dir = h.direction === "incoming" ? "👤 User" : "📩 Admin";
+        const time = h.created_at?.slice(0, 16) || "";
+        return `[${time}] ${dir}: ${h.message}`;
+      });
+
+      const header = `📜 *Chat History: ${userInfo}*\n${"─".repeat(20)}\n`;
+      const footer = `\n${"─".repeat(20)}\nShowing last ${history.length} messages. Use /history ${userId} <limit> to see more.`;
+
+      // 分段发送，避免消息过长
+      const fullText = header + lines.join("\n") + footer;
+      if (fullText.length > 4000) {
+        // 分多条发送
+        const chunks = [];
+        let current = header;
+        for (const line of lines) {
+          if ((current + line + "\n").length > 4000) {
+            chunks.push(current);
+            current = line + "\n";
+          } else {
+            current += line + "\n";
+          }
+        }
+        chunks.push(current + footer);
+        for (const chunk of chunks) {
+          await ctx.reply(chunk, { parse_mode: "Markdown" });
+        }
+      } else {
+        await ctx.reply(fullText, { parse_mode: "Markdown" });
+      }
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
+  });
+
+  // ── Admin: view user transactions ────────────────────────────
+  bot.command("transactions", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only.");
+      return;
+    }
+    const tgId = ctx.message.text.replace(/^\/transactions\s*/i, "").trim();
+    if (!tgId) {
+      await ctx.reply("Usage: /transactions <telegram_id>");
+      return;
+    }
+    try {
+      const d = getDb();
+      const user = await d
+        .collection("users")
+        .findOne({ telegram_id: String(tgId) });
+      if (!user) {
+        await ctx.reply("User not found.");
+        return;
+      }
+      const userId = user._id;
+      const tx = await d
+        .collection("gem_transactions")
+        .find({ user_id: userId })
+        .sort({ created_at: -1 })
+        .limit(10)
+        .toArray();
+      if (!tx.length) {
+        await ctx.reply(`No transactions found for user ${tgId}.`);
+        return;
+      }
+      const lines = tx.map((t) => {
+        const amount =
+          t.amount > 0 ? `+${formatGems(t.amount)}` : formatGems(t.amount);
+        const balance = formatGems(t.balance_after || 0);
+        return `${t.created_at?.slice(0, 16)} | ${amount} gems | balance: ${balance} | ${t.type || ""} ${t.note || ""}`;
+      });
+      await ctx.reply(
+        `📊 *Transactions for user ${tgId} (last 10):*\n\n${lines.join("\n")}`,
+        { parse_mode: "Markdown" },
       );
     } catch (err) {
       await ctx.reply(`Error: ${err.message}`);
@@ -1011,6 +1313,36 @@ function createBot() {
           await ctx.reply(`❌ Approve failed: ${err.message}`);
         } catch {}
       }
+    }
+  });
+
+  // ── Admin: quick history from forwarded message ──────────────
+  bot.action(/^admin_history_(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!isAdmin(ctx.from.id)) return;
+    const userId = parseInt(ctx.match[1], 10);
+    try {
+      const history = await getChatHistory(userId, { limit: 10 });
+      if (!history.length) {
+        await ctx.reply(`No chat history for user ${userId}.`);
+        return;
+      }
+      const userDoc = await getUserByTelegramId(userId);
+      const userInfo = userDoc
+        ? formatUserInfoFromDb(userDoc)
+        : `ID: ${userId}`;
+      const lines = history.map((h) => {
+        const dir = h.direction === "incoming" ? "👤" : "📩";
+        return `${dir} ${h.message}`;
+      });
+      await ctx.reply(
+        `📜 *Recent chat with ${userInfo}*\n\n${lines.join("\n")}\n\nUse /history ${userId} to see all.`,
+        {
+          parse_mode: "Markdown",
+        },
+      );
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
     }
   });
 
@@ -1338,6 +1670,7 @@ function createBot() {
         `/setqr_tng — Set TnG QR (reply to photo)\n` +
         `/setqr_bank — Set Bank QR (reply to photo)\n` +
         `/balanceapi — Check SMS API balance\n` +
+        `/transactions <telegram_id> — Show last 10 transactions of a user\n` +
         `/countries — List SMS countries\n` +
         `/setcountry <id> — Set default country\n` +
         `/webhook — Show webhook URL\n\n` +

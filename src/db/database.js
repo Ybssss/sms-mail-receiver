@@ -8,7 +8,7 @@ const DB_NAME = "sms-mail";
 
 async function connectDb() {
   if (db) return db;
-  
+
   console.log("[DB] Connecting to MongoDB...");
   client = new MongoClient(config.mongoUri, {
     maxPoolSize: 10,
@@ -36,7 +36,9 @@ async function connectDb() {
     db.collection("payments").createIndex({ status: 1 }),
     db.collection("payments").createIndex({ provider: 1, provider_ref: 1 }),
     db.collection("gem_transactions").createIndex({ user_id: 1 }),
-    db.collection("blocked_users").createIndex({ user_id: 1 }, { unique: true }),
+    db
+      .collection("blocked_users")
+      .createIndex({ user_id: 1 }, { unique: true }),
     db.collection("app_config").createIndex({ key: 1 }, { unique: true }),
   ]);
 
@@ -73,7 +75,9 @@ async function closeDb() {
 // Blocked users helpers
 async function isUserBlocked(telegramId) {
   const d = getDb();
-  const row = await d.collection("blocked_users").findOne({ user_id: Number(telegramId) });
+  const row = await d
+    .collection("blocked_users")
+    .findOne({ user_id: Number(telegramId) });
   return !!row;
 }
 
@@ -81,19 +85,32 @@ async function blockUser(telegramId, reason, blockedBy) {
   const d = getDb();
   await d.collection("blocked_users").updateOne(
     { user_id: Number(telegramId) },
-    { $set: { reason: reason || "manual block", blocked_by: blockedBy || null, blocked_at: new Date().toISOString() } },
-    { upsert: true }
+    {
+      $set: {
+        reason: reason || "manual block",
+        blocked_by: blockedBy || null,
+        blocked_at: new Date().toISOString(),
+      },
+    },
+    { upsert: true },
   );
 }
 
 async function unblockUser(telegramId) {
   const d = getDb();
-  await d.collection("blocked_users").deleteOne({ user_id: Number(telegramId) });
+  await d
+    .collection("blocked_users")
+    .deleteOne({ user_id: Number(telegramId) });
 }
 
 async function listBlockedUsers() {
   const d = getDb();
-  return d.collection("blocked_users").find().sort({ blocked_at: -1 }).limit(50).toArray();
+  return d
+    .collection("blocked_users")
+    .find()
+    .sort({ blocked_at: -1 })
+    .limit(50)
+    .toArray();
 }
 
 async function saveUserPreference(telegramId, key, value) {
@@ -101,24 +118,27 @@ async function saveUserPreference(telegramId, key, value) {
   const val = typeof value === "object" ? JSON.stringify(value) : String(value);
   // Only allow specific keys
   if (["preferred_country", "recent_services", "language"].includes(key)) {
-    await d.collection("users").updateOne(
-      { telegram_id: String(telegramId) },
-      { $set: { [key]: val } }
-    );
+    await d
+      .collection("users")
+      .updateOne({ telegram_id: String(telegramId) }, { $set: { [key]: val } });
   }
 }
 
 async function getUserPreferences(telegramId) {
   const d = getDb();
-  const row = await d.collection("users").findOne(
-    { telegram_id: String(telegramId) },
-    { projection: { preferred_country: 1, recent_services: 1, language: 1 } }
-  );
+  const row = await d
+    .collection("users")
+    .findOne(
+      { telegram_id: String(telegramId) },
+      { projection: { preferred_country: 1, recent_services: 1, language: 1 } },
+    );
   if (!row) return {};
   try {
     return {
       preferredCountry: row.preferred_country || null,
-      recentServices: row.recent_services ? JSON.parse(row.recent_services) : [],
+      recentServices: row.recent_services
+        ? JSON.parse(row.recent_services)
+        : [],
       language: row.language || "en",
     };
   } catch {
@@ -136,4 +156,43 @@ module.exports = {
   listBlockedUsers,
   saveUserPreference,
   getUserPreferences,
+  saveChatHistory,
+  getChatHistory,
+  getUserByTelegramId,
 };
+
+// ── Chat history ──────────────────────────────────────────────
+async function saveChatHistory(userId, message, direction, adminId = null) {
+  // direction: 'incoming' (user→bot) or 'outgoing' (admin→user)
+  const d = getDb();
+  const doc = {
+    user_id: userId,
+    telegram_id: typeof userId === "number" ? String(userId) : userId,
+    direction,
+    message,
+    admin_id: adminId,
+    created_at: new Date().toISOString(),
+  };
+  await d.collection("chat_history").insertOne(doc);
+  return doc;
+}
+
+async function getChatHistory(userId, { limit = 20, offset = 0 } = {}) {
+  const d = getDb();
+  const filter = {
+    $or: [{ user_id: userId }, { telegram_id: String(userId) }],
+  };
+  const items = await d
+    .collection("chat_history")
+    .find(filter)
+    .sort({ created_at: -1 })
+    .skip(offset)
+    .limit(limit)
+    .toArray();
+  return items.reverse(); // 按时间正序返回
+}
+
+async function getUserByTelegramId(telegramId) {
+  const d = getDb();
+  return d.collection("users").findOne({ telegram_id: String(telegramId) });
+}
