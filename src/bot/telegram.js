@@ -1732,6 +1732,8 @@ function createBot() {
       createdAt: Date.now(),
     });
 
+    console.log("[BROADCAST] Pending broadcasts size:", pendingBroadcasts.size);
+
     await ctx.reply(
       `⚠️ *Confirm Broadcast*\n\n` +
         `Target: ${targetDesc}\n` +
@@ -1754,13 +1756,21 @@ function createBot() {
 
   // ── Broadcast confirmation ──────────────────────────────────────
   bot.action(/^broadcast_confirm_(.+)$/, async (ctx) => {
+    console.log("[BROADCAST] Confirm triggered, match:", ctx.match[1]); // ← 添加
     await ctx.answerCbQuery();
-    if (!isAdmin(ctx.from.id)) return;
+    if (!isAdmin(ctx.from.id)) {
+      console.log("[BROADCAST] Not admin, aborting"); // ← 添加
+      return;
+    }
 
     const broadcastId = ctx.match[1];
-    const broadcastData = pendingBroadcasts.get(broadcastId);
+    console.log("[BROADCAST] Looking up ID:", broadcastId); // ← 添加
+    console.log("[BROADCAST] Pending broadcasts size:", pendingBroadcasts.size); // ← 添加
+    console.log("[BROADCAST] Keys:", [...pendingBroadcasts.keys()]); // ← 添加
 
+    const broadcastData = pendingBroadcasts.get(broadcastId);
     if (!broadcastData) {
+      console.log("[BROADCAST] Data not found!"); // ← 添加
       await ctx.reply("❌ Broadcast session expired or not found.");
       return;
     }
