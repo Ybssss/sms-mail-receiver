@@ -198,6 +198,7 @@ async function getUserByTelegramId(telegramId) {
   return d.collection("users").findOne({ telegram_id: String(telegramId) });
 }
 // ── Get all Telegram users for broadcast ──────────────────────
+// ── Get all Telegram users for broadcast ──────────────────────
 async function getAllTelegramUsers() {
   const d = getDb();
   const users = await d
