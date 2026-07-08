@@ -1,4 +1,23 @@
 const STORAGE_KEY = "hero_mail_token";
+// ── Wait for Telegram initData (iOS may have delay) ────────────
+function waitForInitData(maxAttempts = 6, delay = 400) {
+  return new Promise((resolve) => {
+    let attempts = 0;
+    const check = () => {
+      attempts++;
+      if (tgWebApp?.initData) {
+        resolve(true);
+        return;
+      }
+      if (attempts >= maxAttempts) {
+        resolve(false);
+        return;
+      }
+      setTimeout(check, delay);
+    };
+    check();
+  });
+}
 let token = "";
 let pollTimer = null;
 let refreshMs = 2000;
@@ -58,10 +77,12 @@ function initTelegramWebApp() {
     const theme = tgWebApp.themeParams || {};
     const root = document.documentElement;
     if (theme.bg_color) root.style.setProperty("--bg", theme.bg_color);
-    if (theme.secondary_bg_color) root.style.setProperty("--surface", theme.secondary_bg_color);
+    if (theme.secondary_bg_color)
+      root.style.setProperty("--surface", theme.secondary_bg_color);
     if (theme.text_color) root.style.setProperty("--text", theme.text_color);
     if (theme.hint_color) root.style.setProperty("--muted", theme.hint_color);
-    if (theme.button_color) root.style.setProperty("--accent-strong", theme.button_color);
+    if (theme.button_color)
+      root.style.setProperty("--accent-strong", theme.button_color);
     if (theme.link_color) root.style.setProperty("--accent", theme.link_color);
 
     document.body.classList.add("in-telegram");
@@ -72,7 +93,7 @@ function initTelegramWebApp() {
       const parts = lang.split("-");
       if (parts.length > 1) userCountryCode = parts[1].toUpperCase();
     }
-    
+
     return true;
   } catch (e) {
     console.warn("Telegram WebApp init failed:", e.message);
@@ -82,43 +103,70 @@ function initTelegramWebApp() {
 
 async function authFromTelegram() {
   if (!tgWebApp?.initData) {
-    console.log("[AUTH] No Telegram initData available — not in Telegram WebView");
+    console.log("[AUTH] No Telegram initData available — skipping auth");
     return false;
   }
-  console.log("[AUTH] Attempting Telegram auth, initData length:", tgWebApp.initData.length);
-  console.log("[AUTH] initData preview (first 200 chars):", tgWebApp.initData.substring(0, 200));
-  console.log("[AUTH] initDataUnsafe:", JSON.stringify({ 
-    hasUser: !!tgWebApp.initDataUnsafe?.user,
-    userId: tgWebApp.initDataUnsafe?.user?.id,
-    firstName: tgWebApp.initDataUnsafe?.user?.first_name,
-    language_code: tgWebApp.initDataUnsafe?.user?.language_code
-  }));
-  
+  if (!tgWebApp?.initData) {
+    console.log(
+      "[AUTH] No Telegram initData available — not in Telegram WebView",
+    );
+    return false;
+  }
+  console.log(
+    "[AUTH] Attempting Telegram auth, initData length:",
+    tgWebApp.initData.length,
+  );
+  console.log(
+    "[AUTH] initData preview (first 200 chars):",
+    tgWebApp.initData.substring(0, 200),
+  );
+  console.log(
+    "[AUTH] initDataUnsafe:",
+    JSON.stringify({
+      hasUser: !!tgWebApp.initDataUnsafe?.user,
+      userId: tgWebApp.initDataUnsafe?.user?.id,
+      firstName: tgWebApp.initDataUnsafe?.user?.first_name,
+      language_code: tgWebApp.initDataUnsafe?.user?.language_code,
+    }),
+  );
+
   try {
     const response = await fetch("/api/telegram-auth", {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
       body: tgWebApp.initData,
     });
-    
+
     console.log("[AUTH] Server response status:", response.status);
-    
+
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
-      console.error("[AUTH] Telegram auth failed:", response.status, errData.error || response.statusText);
+      console.error(
+        "[AUTH] Telegram auth failed:",
+        response.status,
+        errData.error || response.statusText,
+      );
       console.log("[AUTH] Error details:", JSON.stringify(errData));
       return false;
     }
 
     const data = await response.json();
-    console.log("[AUTH] Telegram auth success, user:", data.telegramId, data.firstName);
-    console.log("[AUTH] Received token:", data.token ? data.token.substring(0, 8) + "..." : "NONE");
+    console.log(
+      "[AUTH] Telegram auth success, user:",
+      data.telegramId,
+      data.firstName,
+    );
+    console.log(
+      "[AUTH] Received token:",
+      data.token ? data.token.substring(0, 8) + "..." : "NONE",
+    );
     setToken(data.token);
     tokenPanel.hidden = true;
 
     if (data.firstName) {
       const subtitle = document.querySelector(".subtitle");
-      if (subtitle) subtitle.textContent = `Hi ${data.firstName} — top up gems, order SMS numbers, receive codes instantly.`;
+      if (subtitle)
+        subtitle.textContent = `Hi ${data.firstName} — top up gems, order SMS numbers, receive codes instantly.`;
     }
     return true;
   } catch (e) {
@@ -128,7 +176,9 @@ async function authFromTelegram() {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
-function fmt(n) { return Number(n).toLocaleString("en-MY"); }
+function fmt(n) {
+  return Number(n).toLocaleString("en-MY");
+}
 
 function fmtSeconds(ms) {
   const s = ms / 1000;
@@ -140,7 +190,9 @@ function fmtSeconds(ms) {
 
 function setToken(nextToken) {
   token = nextToken;
-  try { localStorage.setItem(STORAGE_KEY, token); } catch {}
+  try {
+    localStorage.setItem(STORAGE_KEY, token);
+  } catch {}
   if (tokenPanel) tokenPanel.hidden = Boolean(token);
 }
 
@@ -203,7 +255,8 @@ function renderServices(domains) {
 
   if (!domains || domains.length === 0) {
     serviceSelect.innerHTML = '<option value="">No services available</option>';
-    if (orderCostHint) orderCostHint.textContent = "No services returned from provider.";
+    if (orderCostHint)
+      orderCostHint.textContent = "No services returned from provider.";
     return;
   }
 
@@ -223,9 +276,14 @@ function renderServices(domains) {
 function updateOrderCostHint() {
   if (!orderCostHint) return;
   const selected = serviceSelect.value;
-  if (!selected) { orderCostHint.textContent = "Select a service to see gem cost."; return; }
+  if (!selected) {
+    orderCostHint.textContent = "Select a service to see gem cost.";
+    return;
+  }
   const domain = domainList.find((d) => (d.name || d.domain) === selected);
-  orderCostHint.textContent = domain ? `Cost: ${fmt(domain.costGems)} gems` : "Select a service to see gem cost.";
+  orderCostHint.textContent = domain
+    ? `Cost: ${fmt(domain.costGems)} gems`
+    : "Select a service to see gem cost.";
 }
 
 async function createOrder(event) {
@@ -244,13 +302,18 @@ async function createOrder(event) {
     if (!site) throw new Error("Invalid service");
     if (!dom) throw new Error("Invalid domain");
 
-    await api("/api/orders", { method: "POST", body: JSON.stringify({ site, domain: dom }) });
+    await api("/api/orders", {
+      method: "POST",
+      body: JSON.stringify({ site, domain: dom }),
+    });
     await loadOrders();
     await loadWallet();
   } catch (err) {
     // Instant warning for insufficient gems
     if (err.message.includes("Insufficient gems")) {
-      showWarning(err.message + "\n\n💡 Top up gems first using the section above.");
+      showWarning(
+        err.message + "\n\n💡 Top up gems first using the section above.",
+      );
     } else {
       liveStatus.textContent = err.message;
       liveStatus.className = "status-pill error";
@@ -267,13 +330,16 @@ function showWarning(message, duration = 5000) {
   if (!toast) {
     toast = document.createElement("div");
     toast.id = "warning-toast";
-    toast.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#fbbf24;color:#000;padding:14px 20px;border-radius:12px;font-weight:600;z-index:2000;max-width:90%;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.3);";
+    toast.style.cssText =
+      "position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#fbbf24;color:#000;padding:14px 20px;border-radius:12px;font-weight:600;z-index:2000;max-width:90%;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.3);";
     document.body.appendChild(toast);
   }
   toast.textContent = message;
   toast.style.display = "block";
   clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => { toast.style.display = "none"; }, duration);
+  toast._timer = setTimeout(() => {
+    toast.style.display = "none";
+  }, duration);
   // Also scroll to topup panel
   $("topup-panel")?.scrollIntoView({ behavior: "smooth" });
 }
@@ -287,11 +353,15 @@ function renderSmsCountries(countries) {
     return;
   }
   smsCountryList = countries;
-  
+
   // Sort: user's Telegram country first, then by name
   const sorted = [...countries].sort((a, b) => {
-    const aMatch = a.id === userCountryCode || (a.eng || "").toUpperCase().includes(userCountryCode);
-    const bMatch = b.id === userCountryCode || (b.eng || "").toUpperCase().includes(userCountryCode);
+    const aMatch =
+      a.id === userCountryCode ||
+      (a.eng || "").toUpperCase().includes(userCountryCode);
+    const bMatch =
+      b.id === userCountryCode ||
+      (b.eng || "").toUpperCase().includes(userCountryCode);
     if (aMatch && !bMatch) return -1;
     if (!aMatch && bMatch) return 1;
     return (a.eng || "").localeCompare(b.eng || "");
@@ -308,7 +378,9 @@ function renderSmsCountries(countries) {
     smsCountrySelect.value = smsSelectedCountry;
   } else {
     // Auto-select Malaysia by default if not already selected
-    const malaysiaOpt = Array.from(smsCountrySelect.options).find(o => o.textContent.includes("Malaysia"));
+    const malaysiaOpt = Array.from(smsCountrySelect.options).find((o) =>
+      o.textContent.includes("Malaysia"),
+    );
     if (malaysiaOpt) {
       smsSelectedCountry = malaysiaOpt.value;
       smsCountrySelect.value = malaysiaOpt.value;
@@ -331,12 +403,12 @@ if (smsCountrySelect) {
 
 async function loadSmsPricesForCountry(countryId) {
   if (!smsServiceSelect || !smsSearchInput) return;
-  
+
   smsServiceSelect.innerHTML = '<option value="">Loading prices...</option>';
   smsServiceSelect.disabled = true;
   smsSearchInput.placeholder = `Loading prices...`;
   if (smsSummary) smsSummary.classList.add("hidden");
-  
+
   try {
     const data = await api(`/api/sms-services?country=${countryId}`);
     if (data.currentCountryId) {
@@ -350,10 +422,12 @@ async function loadSmsPricesForCountry(countryId) {
     if (smsServiceSelect && smsServiceList.length > 0) {
       populateSmsDropdown(); // Show existing list
     } else {
-      smsServiceSelect.innerHTML = '<option value="">Failed to load prices</option>';
+      smsServiceSelect.innerHTML =
+        '<option value="">Failed to load prices</option>';
     }
     if (smsError) {
-      smsError.textContent = "Could not load prices for this country. Showing cached data.";
+      smsError.textContent =
+        "Could not load prices for this country. Showing cached data.";
       smsError.classList.remove("hidden");
     }
   } finally {
@@ -384,7 +458,7 @@ function renderSmsServices(services) {
   if (smsError) smsError.classList.add("hidden");
   if (smsResult) smsResult.textContent = "";
   if (smsSummary) smsSummary.classList.add("hidden");
-  
+
   populateSmsDropdown();
 
   if (smsSearchInput) {
@@ -395,13 +469,17 @@ function renderSmsServices(services) {
 
 function populateSmsDropdown(filter) {
   if (!smsServiceSelect) return;
-  const query = (filter || (smsSearchInput?.value || "")).toLowerCase().trim();
+  const query = (filter || smsSearchInput?.value || "").toLowerCase().trim();
 
-  smsServiceSelect.innerHTML = query ? "" : '<option value="">Select a service...</option>';
+  smsServiceSelect.innerHTML = query
+    ? ""
+    : '<option value="">Select a service...</option>';
 
   const filtered = query
-    ? smsServiceList.filter((s) =>
-        s.name.toLowerCase().includes(query) || s.code.toLowerCase().includes(query)
+    ? smsServiceList.filter(
+        (s) =>
+          s.name.toLowerCase().includes(query) ||
+          s.code.toLowerCase().includes(query),
       )
     : smsServiceList;
 
@@ -412,7 +490,8 @@ function populateSmsDropdown(filter) {
 
   // Auto-select best match when typing
   if (query && filtered.length > 0) {
-    smsServiceSelect.innerHTML = '<option value="">Select a service...</option>';
+    smsServiceSelect.innerHTML =
+      '<option value="">Select a service...</option>';
   }
 
   filtered.forEach((s) => {
@@ -437,11 +516,16 @@ if (smsServiceSelect) {
   smsServiceSelect.addEventListener("change", () => {
     const selected = smsServiceSelect.value;
     if (!selected || !smsSummary) return;
-    const svc = smsServiceList.find(s => s.code === selected);
+    const svc = smsServiceList.find((s) => s.code === selected);
     if (svc) {
-      const priceGems = svc.costGems ? fmt(svc.costGems) : svc.costUsd ? `$${svc.costUsd.toFixed(2)}` : "?";
+      const priceGems = svc.costGems
+        ? fmt(svc.costGems)
+        : svc.costUsd
+          ? `$${svc.costUsd.toFixed(2)}`
+          : "?";
       const stock = svc.stock || "?";
-      const countryName = smsCountrySelect?.selectedOptions[0]?.textContent || "selected country";
+      const countryName =
+        smsCountrySelect?.selectedOptions[0]?.textContent || "selected country";
       smsSummary.innerHTML = `<strong>${svc.name}</strong> — ${priceGems} gems · ${stock} numbers · 🌍 ${countryName}`;
       smsSummary.classList.remove("hidden");
     }
@@ -455,11 +539,17 @@ if (smsSearchInput) {
     // Show summary hint for matched service
     if (smsSummary) {
       const query = smsSearchInput.value.toLowerCase().trim();
-      const match = smsServiceList.find(s => 
-        s.name.toLowerCase().includes(query) || s.code.toLowerCase().includes(query)
+      const match = smsServiceList.find(
+        (s) =>
+          s.name.toLowerCase().includes(query) ||
+          s.code.toLowerCase().includes(query),
       );
       if (match && query.length >= 2) {
-        const priceGems = match.costGems ? fmt(match.costGems) : match.costUsd ? `$${match.costUsd.toFixed(2)}` : "?";
+        const priceGems = match.costGems
+          ? fmt(match.costGems)
+          : match.costUsd
+            ? `$${match.costUsd.toFixed(2)}`
+            : "?";
         smsSummary.innerHTML = `<strong>Best match:</strong> ${match.name} — ${priceGems} gems · stock: ${match.stock || "?"}`;
         smsSummary.classList.remove("hidden");
       } else if (!smsServiceSelect.value) {
@@ -506,15 +596,22 @@ async function createSmsOrder(event) {
       checkBtn.className = "btn-secondary";
       checkBtn.textContent = "🔄 Check SMS Code";
       checkBtn.dataset.activationId = result.activationId;
-      checkBtn.addEventListener("click", () => checkSmsCode(result.activationId));
+      checkBtn.addEventListener("click", () =>
+        checkSmsCode(result.activationId),
+      );
       smsResult.after(checkBtn);
     }
   } catch (err) {
     // Instant warning for insufficient gems
     if (err.message.includes("Insufficient gems")) {
-      showWarning(err.message + "\n\n💡 Top up gems first using the section above.");
+      showWarning(
+        err.message + "\n\n💡 Top up gems first using the section above.",
+      );
     } else {
-      if (smsError) { smsError.textContent = err.message; smsError.classList.remove("hidden"); }
+      if (smsError) {
+        smsError.textContent = err.message;
+        smsError.classList.remove("hidden");
+      }
     }
     if (smsResult) smsResult.textContent = "";
   } finally {
@@ -528,13 +625,17 @@ async function checkSmsCode(activationId) {
     const status = await api(`/api/sms/status/${activationId}`);
     const msgEl = document.createElement("p");
     msgEl.className = "hint";
-    const statusText = status.status === "OK"
-      ? `✅ Code received: ${status.smsCode}`
-      : `⏳ Status: ${status.status}${status.messages?.length ? ` - ${status.messages[0]?.text || ""}` : ""}`;
+    const statusText =
+      status.status === "OK"
+        ? `✅ Code received: ${status.smsCode}`
+        : `⏳ Status: ${status.status}${status.messages?.length ? ` - ${status.messages[0]?.text || ""}` : ""}`;
     msgEl.textContent = statusText;
     if (smsResult) smsResult.after(msgEl);
   } catch (err) {
-    if (smsError) { smsError.textContent = "Check failed: " + err.message; smsError.classList.remove("hidden"); }
+    if (smsError) {
+      smsError.textContent = "Check failed: " + err.message;
+      smsError.classList.remove("hidden");
+    }
   }
 }
 
@@ -559,11 +660,11 @@ async function checkSmsCodeOnCard(card, activationId) {
         codeRow.style.display = "flex";
         codeRow.style.alignItems = "center";
         codeRow.style.gap = "8px";
-        
+
         const codeText = document.createElement("span");
         codeText.textContent = `📨 Code: ${status.smsCode}`;
         codeText.style.flex = "1";
-        
+
         const copyCodeBtn = document.createElement("button");
         copyCodeBtn.type = "button";
         copyCodeBtn.className = "btn-secondary";
@@ -572,12 +673,17 @@ async function checkSmsCodeOnCard(card, activationId) {
         copyCodeBtn.style.fontSize = "0.8rem";
         copyCodeBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          navigator.clipboard.writeText(status.smsCode).then(() => {
-            copyCodeBtn.textContent = "✅ Copied";
-            setTimeout(() => { copyCodeBtn.textContent = "📋 Copy"; }, 1500);
-          }).catch(() => {});
+          navigator.clipboard
+            .writeText(status.smsCode)
+            .then(() => {
+              copyCodeBtn.textContent = "✅ Copied";
+              setTimeout(() => {
+                copyCodeBtn.textContent = "📋 Copy";
+              }, 1500);
+            })
+            .catch(() => {});
         });
-        
+
         codeRow.append(codeText, copyCodeBtn);
         card.appendChild(codeRow);
       }
@@ -599,12 +705,18 @@ async function checkSmsCodeOnCard(card, activationId) {
       if (status.messages?.length) {
         const msgEl = document.createElement("div");
         msgEl.className = "order-meta";
-        msgEl.textContent = status.messages.map(m => m.text || m.code).filter(Boolean).join(" · ") || "Waiting...";
+        msgEl.textContent =
+          status.messages
+            .map((m) => m.text || m.code)
+            .filter(Boolean)
+            .join(" · ") || "Waiting...";
         const existingMsg = card.querySelector(".check-msg");
         if (existingMsg) existingMsg.remove();
         msgEl.className += " check-msg";
         card.appendChild(msgEl);
-        setTimeout(() => { if (msgEl.parentNode) msgEl.remove(); }, 10000);
+        setTimeout(() => {
+          if (msgEl.parentNode) msgEl.remove();
+        }, 10000);
       }
     }
   } catch (err) {
@@ -614,7 +726,9 @@ async function checkSmsCodeOnCard(card, activationId) {
 
 // Auto-poll SMS activations for codes (runs every refresh cycle)
 async function autoPollSmsCodes() {
-  const cards = ordersList.querySelectorAll(".order-card[data-activation-id]:not(.received)");
+  const cards = ordersList.querySelectorAll(
+    ".order-card[data-activation-id]:not(.received)",
+  );
   for (const card of cards) {
     const activationId = card.dataset.activationId;
     if (activationId) {
@@ -636,7 +750,8 @@ function renderOrders(orders, smsActivations = []) {
     top.className = "order-top";
     const email = document.createElement("div");
     email.className = "order-email";
-    email.textContent = order.email || `${order.domain || order.site} (pending)`;
+    email.textContent =
+      order.email || `${order.domain || order.site} (pending)`;
     const status = document.createElement("span");
     status.className = `order-status${order.value ? " received" : ""}`;
     status.textContent = order.value ? "RECEIVED" : order.status;
@@ -644,7 +759,9 @@ function renderOrders(orders, smsActivations = []) {
 
     const meta = document.createElement("div");
     meta.className = "order-meta";
-    const gemsPart = order.gemsCharged ? ` · ${fmt(order.gemsCharged)} gems` : "";
+    const gemsPart = order.gemsCharged
+      ? ` · ${fmt(order.gemsCharged)} gems`
+      : "";
     meta.textContent = `📧 #${order.id} · ${order.site || ""} · ${order.domain || ""}${gemsPart}`;
     card.append(top, meta);
 
@@ -692,27 +809,34 @@ function renderOrders(orders, smsActivations = []) {
     phoneEl.addEventListener("click", () => {
       const phone = a.phoneNumber || "";
       if (!phone) return;
-      navigator.clipboard.writeText(phone).then(() => {
-        const orig = phoneEl.textContent;
-        phoneEl.textContent = "📋 Copied!";
-        setTimeout(() => { phoneEl.textContent = orig; }, 1500);
-      }).catch(() => {
-        // Fallback for non-HTTPS
-        const ta = document.createElement("textarea");
-        ta.value = phone;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-        const orig = phoneEl.textContent;
-        phoneEl.textContent = "📋 Copied!";
-        setTimeout(() => { phoneEl.textContent = orig; }, 1500);
-      });
+      navigator.clipboard
+        .writeText(phone)
+        .then(() => {
+          const orig = phoneEl.textContent;
+          phoneEl.textContent = "📋 Copied!";
+          setTimeout(() => {
+            phoneEl.textContent = orig;
+          }, 1500);
+        })
+        .catch(() => {
+          // Fallback for non-HTTPS
+          const ta = document.createElement("textarea");
+          ta.value = phone;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+          const orig = phoneEl.textContent;
+          phoneEl.textContent = "📋 Copied!";
+          setTimeout(() => {
+            phoneEl.textContent = orig;
+          }, 1500);
+        });
     });
 
     const status = document.createElement("span");
     status.className = `order-status${a.smsCode ? " received" : ""}`;
-    status.textContent = a.smsCode ? "CODE RECEIVED" : (a.status || "WAIT_CODE");
+    status.textContent = a.smsCode ? "CODE RECEIVED" : a.status || "WAIT_CODE";
     top.append(phoneEl, status);
 
     // Service & cost line
@@ -756,11 +880,11 @@ function renderOrders(orders, smsActivations = []) {
       codeRow.style.display = "flex";
       codeRow.style.alignItems = "center";
       codeRow.style.gap = "8px";
-      
+
       const codeText = document.createElement("span");
       codeText.textContent = `📨 Code: ${a.smsCode}`;
       codeText.style.flex = "1";
-      
+
       const copyCodeBtn = document.createElement("button");
       copyCodeBtn.type = "button";
       copyCodeBtn.className = "btn-secondary";
@@ -769,12 +893,17 @@ function renderOrders(orders, smsActivations = []) {
       copyCodeBtn.style.fontSize = "0.8rem";
       copyCodeBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        navigator.clipboard.writeText(a.smsCode).then(() => {
-          copyCodeBtn.textContent = "✅ Copied";
-          setTimeout(() => { copyCodeBtn.textContent = "📋 Copy"; }, 1500);
-        }).catch(() => {});
+        navigator.clipboard
+          .writeText(a.smsCode)
+          .then(() => {
+            copyCodeBtn.textContent = "✅ Copied";
+            setTimeout(() => {
+              copyCodeBtn.textContent = "📋 Copy";
+            }, 1500);
+          })
+          .catch(() => {});
       });
-      
+
       codeRow.append(codeText, copyCodeBtn);
       card.appendChild(codeRow);
     }
@@ -787,7 +916,9 @@ function renderOrders(orders, smsActivations = []) {
       checkBtn.type = "button";
       checkBtn.className = "btn-secondary";
       checkBtn.textContent = "🔄 Check Code";
-      checkBtn.addEventListener("click", () => checkSmsCodeOnCard(card, a.activationId));
+      checkBtn.addEventListener("click", () =>
+        checkSmsCodeOnCard(card, a.activationId),
+      );
       actions.appendChild(checkBtn);
       card.appendChild(actions);
     }
@@ -805,8 +936,10 @@ async function loadOrders() {
       api("/api/orders"),
       api("/api/sms-activations"),
     ]);
-    const orders = emailData.status === "fulfilled" ? (emailData.value.orders || []) : [];
-    const activations = smsData.status === "fulfilled" ? (smsData.value.activations || []) : [];
+    const orders =
+      emailData.status === "fulfilled" ? emailData.value.orders || [] : [];
+    const activations =
+      smsData.status === "fulfilled" ? smsData.value.activations || [] : [];
     renderOrders(orders, activations);
     liveStatus.textContent = `Live · ${orders.length} email · ${activations.length} SMS`;
     liveStatus.className = "status-pill live";
@@ -830,7 +963,7 @@ async function cancelOrder(id) {
 // ── Config & Services ────────────────────────────────────────────
 async function loadHealth() {
   try {
-    const health = await fetch("/api/health").then(r => r.json());
+    const health = await fetch("/api/health").then((r) => r.json());
     refreshMs = health.pollIntervalMs || 2000;
     updatePollDisplay(refreshMs);
   } catch {}
@@ -843,14 +976,16 @@ function updatePollDisplay(ms) {
 
 async function loadConfig() {
   try {
-    const configData = await fetch("/api/config").then(r => r.json());
+    const configData = await fetch("/api/config").then((r) => r.json());
     refreshMs = configData.pollIntervalMs || 2000;
     updatePollDisplay(refreshMs);
-    if (configData.botUsername) telegramLink.href = `https://t.me/${configData.botUsername}`;
+    if (configData.botUsername)
+      telegramLink.href = `https://t.me/${configData.botUsername}`;
     await loadServices();
   } catch (err) {
     serviceSelect.innerHTML = '<option value="">Failed to load config</option>';
-    if (orderCostHint) orderCostHint.textContent = "Config load error: " + err.message;
+    if (orderCostHint)
+      orderCostHint.textContent = "Config load error: " + err.message;
   }
 }
 
@@ -862,9 +997,9 @@ async function loadServices() {
       const data = await api("/api/domains");
       renderServices(data.domains);
     })(),
-    // SMS countries (public, no auth needed)  
+    // SMS countries (public, no auth needed)
     (async () => {
-      const cData = await fetch("/api/sms-countries").then(r => r.json());
+      const cData = await fetch("/api/sms-countries").then((r) => r.json());
       renderSmsCountries(cData.countries);
     })(),
   ]);
@@ -872,17 +1007,26 @@ async function loadServices() {
   // Handle failures gracefully
   if (results[0].status === "rejected") {
     serviceSelect.innerHTML = '<option value="">Services unavailable</option>';
-    if (orderCostHint) orderCostHint.textContent = "Could not load services. Check Hero-SMS API key.";
-    console.error("loadServices email domains error:", results[0].reason?.message);
+    if (orderCostHint)
+      orderCostHint.textContent =
+        "Could not load services. Check Hero-SMS API key.";
+    console.error(
+      "loadServices email domains error:",
+      results[0].reason?.message,
+    );
   }
   if (results[1].status === "rejected") {
-    if (smsCountrySelect) smsCountrySelect.innerHTML = '<option value="">Failed to load countries</option>';
+    if (smsCountrySelect)
+      smsCountrySelect.innerHTML =
+        '<option value="">Failed to load countries</option>';
     console.error("Failed to load SMS countries:", results[1].reason?.message);
   }
 
   // SMS services — only if country wasn't auto-selected by renderSmsCountries
   if (!smsSelectedCountry) {
-    try { await loadSmsServices(); } catch {}
+    try {
+      await loadSmsServices();
+    } catch {}
   }
 }
 
@@ -894,15 +1038,21 @@ async function runTopup(body) {
   if (topupConfirmSection) topupConfirmSection.classList.add("hidden");
   if (confirmPaymentResult) confirmPaymentResult.textContent = "";
   topupResult.textContent = "Creating payment…";
-  
+
   try {
-    const result = await api("/api/topup", { method: "POST", body: JSON.stringify(body) });
+    const result = await api("/api/topup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
 
     if (result.billUrl) {
       topupResult.innerHTML = `Pay via Billplz: <a href="${result.billUrl}" target="_blank" rel="noopener">Open payment</a>`;
       window.open(result.billUrl, "_blank");
     } else if (result.instructions) {
-      topupResult.textContent = [...result.instructions, `Payment #${result.paymentId}`].join(" · ");
+      topupResult.textContent = [
+        ...result.instructions,
+        `Payment #${result.paymentId}`,
+      ].join(" · ");
       if (result.qrUrl) {
         const qrImg = document.createElement("img");
         qrImg.src = result.qrUrl;
@@ -940,13 +1090,24 @@ async function loadPaymentHistory() {
     paymentHistory.classList.remove("hidden");
     payments.forEach((p) => {
       const row = document.createElement("div");
-      row.style.cssText = "display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border, #333);font-size:0.85rem;";
-      const providerLabel = p.provider === "manual_tng" ? "📱 TnG" : p.provider === "manual_bank" ? "🏦 Bank" : "💳 Billplz";
-      const statusColor = p.status === "paid" ? "#4ade80" : p.status === "cancelled" ? "#f87171" : "#fbbf24";
+      row.style.cssText =
+        "display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border, #333);font-size:0.85rem;";
+      const providerLabel =
+        p.provider === "manual_tng"
+          ? "📱 TnG"
+          : p.provider === "manual_bank"
+            ? "🏦 Bank"
+            : "💳 Billplz";
+      const statusColor =
+        p.status === "paid"
+          ? "#4ade80"
+          : p.status === "cancelled"
+            ? "#f87171"
+            : "#fbbf24";
       row.innerHTML = `<span>${providerLabel} · RM ${p.amountMyr} → ${p.gems?.toLocaleString?.() || p.gems} gems</span>
         <span style="display:flex;align-items:center;gap:8px;">
           <span style="color:${statusColor};font-weight:600;">${p.status.toUpperCase()}</span>
-          ${(p.status === "pending" || p.status === "pending_review") ? `<button class="btn-secondary" style="font-size:0.75rem;padding:2px 8px;" data-pid="${p.id}">Withdraw</button>` : ""}
+          ${p.status === "pending" || p.status === "pending_review" ? `<button class="btn-secondary" style="font-size:0.75rem;padding:2px 8px;" data-pid="${p.id}">Withdraw</button>` : ""}
         </span>`;
       paymentHistoryList.appendChild(row);
       // Attach withdraw handler
@@ -954,14 +1115,17 @@ async function loadPaymentHistory() {
       if (withdrawBtn) {
         withdrawBtn.addEventListener("click", async () => {
           try {
-            await api("/api/cancel-payment", { method: "POST", body: JSON.stringify({ paymentId: p.id }) });
+            await api("/api/cancel-payment", {
+              method: "POST",
+              body: JSON.stringify({ paymentId: p.id }),
+            });
             withdrawBtn.textContent = "Cancelled";
             withdrawBtn.disabled = true;
             setTimeout(() => loadPaymentHistory(), 2000);
           } catch (err) {
             console.error("Withdraw error:", err.message);
             withdrawBtn.textContent = "Failed";
-            setTimeout(() => withdrawBtn.textContent = "Withdraw", 3000);
+            setTimeout(() => (withdrawBtn.textContent = "Withdraw"), 3000);
           }
         });
       }
@@ -974,15 +1138,17 @@ async function loadPaymentHistory() {
 // Payment proof upload — DOMContentLoaded safe
 function setupPaymentProof() {
   if (!confirmPaymentBtn) return;
-  
+
   confirmPaymentBtn.addEventListener("click", async () => {
     if (!lastPaymentId) {
-      if (confirmPaymentResult) confirmPaymentResult.textContent = "No payment to confirm.";
+      if (confirmPaymentResult)
+        confirmPaymentResult.textContent = "No payment to confirm.";
       return;
     }
     const file = paymentProofInput?.files?.[0];
     if (!file) {
-      if (confirmPaymentResult) confirmPaymentResult.textContent = "Please select a receipt image.";
+      if (confirmPaymentResult)
+        confirmPaymentResult.textContent = "Please select a receipt image.";
       return;
     }
 
@@ -998,11 +1164,16 @@ function setupPaymentProof() {
 
       await api("/api/admin/submit-proof", {
         method: "POST",
-        body: JSON.stringify({ paymentId: lastPaymentId, proof: base64, fileName: file.name }),
+        body: JSON.stringify({
+          paymentId: lastPaymentId,
+          proof: base64,
+          fileName: file.name,
+        }),
       });
-      
+
       if (confirmPaymentResult) {
-        confirmPaymentResult.textContent = "✅ Proof submitted! Wait for admin approval.";
+        confirmPaymentResult.textContent =
+          "✅ Proof submitted! Wait for admin approval.";
         confirmPaymentResult.style.color = "#4ade80";
       }
       if (topupConfirmSection) topupConfirmSection.classList.add("hidden");
@@ -1027,7 +1198,10 @@ function updateCustomTopupHint() {
   }
   const fee = amountMyr * wallet.billplzFee;
   const total = amountMyr + fee;
-  customMyrInput.setAttribute("placeholder", `Enter RM amount (min RM 5) — total with fee: RM ${total.toFixed(2)}`);
+  customMyrInput.setAttribute(
+    "placeholder",
+    `Enter RM amount (min RM 5) — total with fee: RM ${total.toFixed(2)}`,
+  );
 }
 
 // ── Session ──────────────────────────────────────────────────────
@@ -1048,14 +1222,42 @@ async function initSession() {
 
   // Second priority: Telegram WebApp initData auth
   const inTelegram = initTelegramWebApp();
-  if (inTelegram && (await authFromTelegram())) {
-    tokenInput.value = token;
-    return;
+  if (inTelegram) {
+    // 等待 initData 就绪，最多重试 6 次（约 2.4 秒）
+    const hasInitData = await waitForInitData(6, 400);
+    if (hasInitData) {
+      // 尝试认证，最多重试 3 次（每次间隔 500ms）
+      let authSuccess = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) {
+          console.log(`[SESSION] Auth retry ${attempt + 1}`);
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        if (await authFromTelegram()) {
+          authSuccess = true;
+          break;
+        }
+      }
+      if (authSuccess) {
+        tokenInput.value = token;
+        return;
+      } else {
+        console.warn("[SESSION] Telegram auth failed after retries");
+      }
+    } else {
+      console.warn("[SESSION] Telegram initData not available after waiting");
+    }
+    // 如果认证失败，继续执行后续逻辑（saved token 或新 session）
+    // 但此时用户仍可通过手动 Connect 重新认证
   }
 
   // Third priority: saved token from localStorage — validate it first
   const savedToken = (() => {
-    try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
+    try {
+      return localStorage.getItem(STORAGE_KEY);
+    } catch {
+      return null;
+    }
   })();
   if (savedToken) {
     setToken(savedToken);
@@ -1068,7 +1270,9 @@ async function initSession() {
       return;
     } catch (e) {
       console.log("[SESSION] Saved token invalid:", e.message);
-      try { localStorage.removeItem(STORAGE_KEY); } catch {}
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {}
       token = "";
       // Fall through to create new web session
     }
@@ -1077,7 +1281,7 @@ async function initSession() {
   // Last resort: create new web session
   try {
     console.log("[SESSION] Creating new web session");
-    const session = await fetch("/api/session").then(r => r.json());
+    const session = await fetch("/api/session").then((r) => r.json());
     setToken(session.token);
     tokenInput.value = token;
   } catch (e) {
@@ -1089,7 +1293,10 @@ function startAutoRefresh() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(() => {
     if (!token) return;
-    loadOrders().catch(() => { liveStatus.textContent = "Reconnecting…"; liveStatus.className = "status-pill error"; });
+    loadOrders().catch(() => {
+      liveStatus.textContent = "Reconnecting…";
+      liveStatus.className = "status-pill error";
+    });
     loadWallet().catch(() => {});
     autoPollSmsCodes().catch(() => {});
     loadPaymentHistory().catch(() => {});
@@ -1099,14 +1306,20 @@ function startAutoRefresh() {
 // ── Event bindings ───────────────────────────────────────────────
 orderForm?.addEventListener("submit", createOrder);
 smsOrderForm?.addEventListener("submit", createSmsOrder);
-refreshBtn?.addEventListener("click", () => { loadOrders(); loadWallet(); });
+refreshBtn?.addEventListener("click", () => {
+  loadOrders();
+  loadWallet();
+});
 serviceSelect?.addEventListener("change", updateOrderCostHint);
 
 customTopupBtn?.addEventListener("click", () => {
   const amountMyr = parseFloat(customMyrInput.value);
   const method = topupMethodSelect.value;
   if (!amountMyr || !method) return;
-  if (amountMyr < 5) { topupResult.textContent = "Minimum top-up is RM 5"; return; }
+  if (amountMyr < 5) {
+    topupResult.textContent = "Minimum top-up is RM 5";
+    return;
+  }
   runTopup({ method, amountMyr });
 });
 
@@ -1116,8 +1329,14 @@ tokenSave?.addEventListener("click", async () => {
   const value = tokenInput.value.trim();
   if (!value) return;
   setToken(value);
-  try { await loadWallet(); await loadOrders(); startAutoRefresh(); } catch {
-    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  try {
+    await loadWallet();
+    await loadOrders();
+    startAutoRefresh();
+  } catch {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {}
     liveStatus.textContent = "Invalid token";
     liveStatus.className = "status-pill error";
   }
@@ -1147,14 +1366,21 @@ function showConfirm(message, onConfirm) {
 
 $("confirm-yes")?.addEventListener("click", () => {
   $("confirm-modal").style.display = "none";
-  if (pendingAction) { const fn = pendingAction; pendingAction = null; fn(); }
+  if (pendingAction) {
+    const fn = pendingAction;
+    pendingAction = null;
+    fn();
+  }
 });
 $("confirm-no")?.addEventListener("click", () => {
   $("confirm-modal").style.display = "none";
   pendingAction = null;
 });
 $("confirm-modal")?.addEventListener("click", (e) => {
-  if (e.target === e.currentTarget) { $("confirm-modal").style.display = "none"; pendingAction = null; }
+  if (e.target === e.currentTarget) {
+    $("confirm-modal").style.display = "none";
+    pendingAction = null;
+  }
 });
 
 // ── Admin panel ──────────────────────────────────────────────────
@@ -1196,10 +1422,14 @@ function renderAdminPayments(payments) {
     `;
 
     card.querySelector(".approve-btn")?.addEventListener("click", () => {
-      showConfirm(`Approve payment #${p.id} for RM ${p.amountMyr}?`, () => adminAction("approve", p.id));
+      showConfirm(`Approve payment #${p.id} for RM ${p.amountMyr}?`, () =>
+        adminAction("approve", p.id),
+      );
     });
     card.querySelector(".reject-btn")?.addEventListener("click", () => {
-      showConfirm(`Reject payment #${p.id} (RM ${p.amountMyr})?`, () => adminAction("reject", p.id));
+      showConfirm(`Reject payment #${p.id} (RM ${p.amountMyr})?`, () =>
+        adminAction("reject", p.id),
+      );
     });
     adminApprovalsList.appendChild(card);
   });
@@ -1207,7 +1437,10 @@ function renderAdminPayments(payments) {
 
 async function adminAction(action, paymentId) {
   try {
-    await api(`/api/admin/${action}-payment`, { method: "POST", body: JSON.stringify({ paymentId }) });
+    await api(`/api/admin/${action}-payment`, {
+      method: "POST",
+      body: JSON.stringify({ paymentId }),
+    });
     await loadAdminPendingPayments();
     liveStatus.textContent = `Payment #${paymentId} ${action}d`;
     liveStatus.className = "status-pill live";
@@ -1252,7 +1485,7 @@ async function bootstrap() {
   liveStatus.textContent = "Initializing...";
   console.log("[DEBUG] Bootstrap: initSession...");
   await initSession();
-  
+
   if (!token) {
     liveStatus.textContent = "No access token — open via Telegram /start";
     liveStatus.className = "status-pill error";
@@ -1268,7 +1501,7 @@ async function bootstrap() {
   await loadConfig();
   console.log("[DEBUG] Bootstrap: loadHealth...");
   await loadHealth();
-  
+
   // Clean URL
   const url = new URL(window.location.href);
   if (url.searchParams.has("token")) {
@@ -1280,7 +1513,7 @@ async function bootstrap() {
   await checkAdmin();
   await loadWallet();
   await loadOrders();
-  
+
   liveStatus.textContent = `Live · ${ordersList?.children?.length || 0} orders`;
   liveStatus.className = "status-pill live";
   startAutoRefresh();
@@ -1293,6 +1526,9 @@ bootstrap().catch((err) => {
   liveStatus.className = "status-pill error";
 });
 
-if (window.location.hash === "#topup" || new URLSearchParams(window.location.search).get("topup")) {
+if (
+  window.location.hash === "#topup" ||
+  new URLSearchParams(window.location.search).get("topup")
+) {
   $("topup-panel")?.scrollIntoView({ behavior: "smooth" });
 }

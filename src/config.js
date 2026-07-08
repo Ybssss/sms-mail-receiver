@@ -38,8 +38,8 @@ const config = {
     process.env.EXCHANGE_RATE_CACHE_MS || "3600000",
     10,
   ),
-  orderMarkupPercent: parseFloat(process.env.ORDER_MARKUP_PERCENT || "20"),
-  minOrderGems: parseInt(process.env.MIN_ORDER_GEMS || "8000", 10),
+  orderMarkupPercent: parseFloat(process.env.ORDER_MARKUP_PERCENT) || 50,
+  minOrderPriceMyr: parseFloat(process.env.MIN_ORDER_PRICE_MYR) || 0.8,
   defaultOrderCostMyr: parseFloat(process.env.DEFAULT_ORDER_COST_MYR || "0.50"),
   minTopupMyr: parseFloat(process.env.MIN_TOPUP_MYR || "5"),
 
@@ -75,6 +75,8 @@ const config = {
   smsActivateEnabled: process.env.SMS_ACTIVATE_ENABLED !== "false",
 
   adminTelegramIds: parseAdminIds(process.env.ADMIN_TELEGRAM_IDS),
+
+  MIN_ORDER_PRICE_MYR: parseFloat(process.env.MIN_ORDER_PRICE_MYR) || 0.8,
 };
 
 function validateConfig() {
