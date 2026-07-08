@@ -35,8 +35,20 @@ async function smsActivateRequest(action, extraParams = {}) {
 
   console.log(`[DEBUG] smsActivate response (${action}):`, text.slice(0, 300));
 
-  // The SMS-Activate API returns text/plain responses
-  // Error format: "BAD_ACTION", "BAD_KEY", "NO_NUMBERS", etc.
+  // 1. 先尝试解析 JSON
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = null;
+  }
+
+  // 2. 如果是 JSON 错误响应（包含 title 字段），抛出异常
+  if (parsed && parsed.title) {
+    throw new SmsActivateError(parsed.title, response.status);
+  }
+
+  // 3. 检查文本错误前缀（兼容旧格式）
   if (
     text.startsWith("BAD_") ||
     text.startsWith("NO_") ||
@@ -45,13 +57,9 @@ async function smsActivateRequest(action, extraParams = {}) {
     throw new SmsActivateError(text, response.status);
   }
 
-  // Try to parse JSON if possible
-  try {
-    return JSON.parse(text);
-  } catch {
-    // Return raw text for simple responses like "ACCESS_NUMBER:..."
-    return text;
-  }
+  // 4. 返回解析结果
+  if (parsed !== null) return parsed;
+  return text;
 }
 
 /**
@@ -137,7 +145,10 @@ async function getPrices(service, country) {
   if (typeof result === "string" && result.trim()) {
     try {
       const parsed = JSON.parse(result);
-      console.log("[DEBUG] getPrices parsed JSON object keys count:", Object.keys(parsed).length);
+      console.log(
+        "[DEBUG] getPrices parsed JSON object keys count:",
+        Object.keys(parsed).length,
+      );
       const prices = [];
       for (const [code, data] of Object.entries(parsed)) {
         if (typeof data === "object" && data !== null) {
@@ -147,7 +158,12 @@ async function getPrices(service, country) {
             // Try finding any value that looks like a price (e.g. "0.15")
             const entries = Object.entries(data);
             for (const [k, v] of entries) {
-              if (k !== "count" && k !== "physicalCount" && typeof v === "string" && !isNaN(Number(v))) {
+              if (
+                k !== "count" &&
+                k !== "physicalCount" &&
+                typeof v === "string" &&
+                !isNaN(Number(v))
+              ) {
                 cost = v;
                 break;
               }
@@ -155,7 +171,13 @@ async function getPrices(service, country) {
           }
           const count = data.count ?? 0;
           const physicalCount = data.physicalCount ?? 0;
-          prices.push({ [code]: { cost: Number(cost || 0), count: Number(count), physicalCount: Number(physicalCount) } });
+          prices.push({
+            [code]: {
+              cost: Number(cost || 0),
+              count: Number(count),
+              physicalCount: Number(physicalCount),
+            },
+          });
         }
       }
       console.log("[DEBUG] getPrices parsed", prices.length, "price entries");
@@ -173,7 +195,10 @@ async function getPrices(service, country) {
 
   // Maybe wrapped in status object
   if (result?.status === "success" && result.data) {
-    console.log("[DEBUG] getPrices wrapped in status object, data is", typeof result.data);
+    console.log(
+      "[DEBUG] getPrices wrapped in status object, data is",
+      typeof result.data,
+    );
     return Array.isArray(result.data) ? result.data : [];
   }
 
@@ -186,12 +211,26 @@ async function getPrices(service, country) {
     const firstVal = result[keys[0]];
     if (firstVal && typeof firstVal === "object" && !Array.isArray(firstVal)) {
       const innerKeys = Object.keys(firstVal);
-      if (innerKeys.length > 0 && firstVal[innerKeys[0]] && typeof firstVal[innerKeys[0]] === "object" && firstVal[innerKeys[0]].cost !== undefined) {
+      if (
+        innerKeys.length > 0 &&
+        firstVal[innerKeys[0]] &&
+        typeof firstVal[innerKeys[0]] === "object" &&
+        firstVal[innerKeys[0]].cost !== undefined
+      ) {
         // Nested format: result is {countryId: {serviceCode: {cost, count}}}
-        console.log("[DEBUG] getPrices detected nested country->service format, inner keys:", innerKeys.length);
+        console.log(
+          "[DEBUG] getPrices detected nested country->service format, inner keys:",
+          innerKeys.length,
+        );
         const prices = [];
         for (const [code, data] of Object.entries(firstVal)) {
-          prices.push({ [code]: { cost: Number(data.cost || 0), count: Number(data.count || 0), physicalCount: Number(data.physicalCount || 0) } });
+          prices.push({
+            [code]: {
+              cost: Number(data.cost || 0),
+              count: Number(data.count || 0),
+              physicalCount: Number(data.physicalCount || 0),
+            },
+          });
         }
         return prices;
       }
@@ -200,8 +239,18 @@ async function getPrices(service, country) {
     console.log("[DEBUG] getPrices treating as flat service->price format");
     const prices = [];
     for (const [code, data] of Object.entries(result)) {
-      if (typeof data === "object" && data !== null && data.cost !== undefined) {
-        prices.push({ [code]: { cost: Number(data.cost || 0), count: Number(data.count || 0), physicalCount: Number(data.physicalCount || 0) } });
+      if (
+        typeof data === "object" &&
+        data !== null &&
+        data.cost !== undefined
+      ) {
+        prices.push({
+          [code]: {
+            cost: Number(data.cost || 0),
+            count: Number(data.count || 0),
+            physicalCount: Number(data.physicalCount || 0),
+          },
+        });
       }
     }
     if (prices.length > 0) return prices;
@@ -323,8 +372,8 @@ async function getStatus(activationId) {
     if (result === "STATUS_WAIT_CODE") {
       return { status: "WAIT_CODE", smsCode: null, smsText: null };
     }
-    if (result === "STATUS_WAIT_RETRY") {
-      return { status: "WAIT_RETRY", smsCode: null, smsText: null };
+    if (result.startsWith("STATUS_WAIT_RETRY")) {
+      return { status: "WAIT_RETRY", smsCode: null, smsText: result };
     }
     if (result === "STATUS_CANCEL") {
       return { status: "CANCELLED", smsCode: null, smsText: null };

@@ -159,6 +159,7 @@ module.exports = {
   saveChatHistory,
   getChatHistory,
   getUserByTelegramId,
+  getAllTelegramUsers,
 };
 
 // ── Chat history ──────────────────────────────────────────────
@@ -195,4 +196,17 @@ async function getChatHistory(userId, { limit = 20, offset = 0 } = {}) {
 async function getUserByTelegramId(telegramId) {
   const d = getDb();
   return d.collection("users").findOne({ telegram_id: String(telegramId) });
+}
+// ── Get all Telegram users for broadcast ──────────────────────
+async function getAllTelegramUsers() {
+  const d = getDb();
+  const users = await d
+    .collection("users")
+    .find({ telegram_id: { $exists: true, $ne: null } })
+    .project({ telegram_id: 1, language: 1, _id: 0 })
+    .toArray();
+  return users.map((u) => ({
+    telegramId: Number(u.telegram_id),
+    language: u.language || "en",
+  }));
 }

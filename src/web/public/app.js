@@ -912,6 +912,8 @@ function renderOrders(orders, smsActivations = []) {
     if (!a.smsCode) {
       const actions = document.createElement("div");
       actions.className = "order-actions";
+
+      // 检查按钮
       const checkBtn = document.createElement("button");
       checkBtn.type = "button";
       checkBtn.className = "btn-secondary";
@@ -920,6 +922,18 @@ function renderOrders(orders, smsActivations = []) {
         checkSmsCodeOnCard(card, a.activationId),
       );
       actions.appendChild(checkBtn);
+
+      // 取消按钮
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "cancel-btn";
+      cancelBtn.textContent = "❌ Cancel";
+      cancelBtn.style.marginLeft = "8px";
+      cancelBtn.addEventListener("click", () =>
+        cancelSmsActivation(a.activationId, card),
+      );
+      actions.appendChild(cancelBtn);
+
       card.appendChild(actions);
     }
 
@@ -958,6 +972,59 @@ async function cancelOrder(id) {
     liveStatus.textContent = err.message;
     liveStatus.className = "status-pill error";
   }
+}
+
+// ── Cancel SMS Activation ──────────────────────────────────
+async function cancelSmsActivation(activationId, card) {
+  if (!activationId) return;
+
+  // 使用 showConfirm，将实际取消操作放在回调中
+  showConfirm(
+    "Cancel this SMS activation? Funds will be refunded.",
+    async () => {
+      // 用户确认后，禁用按钮
+      const actions = card?.querySelector(".order-actions");
+      if (actions) {
+        const btns = actions.querySelectorAll("button");
+        btns.forEach((b) => (b.disabled = true));
+      }
+
+      try {
+        const result = await api(`/api/sms/status/${activationId}`, {
+          method: "POST",
+          body: JSON.stringify({ status: 8 }),
+        });
+        if (result.ok) {
+          showWarning("✅ SMS activation cancelled. Refund will be processed.");
+          // 刷新订单列表
+          await loadOrders();
+          await loadWallet();
+        }
+      } catch (err) {
+        // 解析错误信息
+        let msg = err.message;
+        if (msg.includes("EARLY_CANCEL_DENIED")) {
+          msg =
+            "❌ Cannot cancel within the first 2 minutes. Please wait and try again.";
+        } else if (msg.includes("FREE_CANCELLATION_EXPIRED")) {
+          msg =
+            "❌ Free cancellation period (20 min) has expired. Contact support.";
+        } else if (msg.includes("OTP_RECEIVED")) {
+          msg =
+            "❌ Cannot cancel – verification code already received on this number.";
+        } else if (msg.includes("ACTIVATION_NOT_ACTIVE")) {
+          msg = "❌ Activation is no longer active.";
+        }
+        showWarning(msg);
+        // 重新启用按钮
+        if (actions) {
+          const btns = actions.querySelectorAll("button");
+          btns.forEach((b) => (b.disabled = false));
+        }
+      }
+    },
+  );
+  // 注意：用户取消时，不会执行回调，按钮保持可用，无需额外操作
 }
 
 // ── Config & Services ────────────────────────────────────────────

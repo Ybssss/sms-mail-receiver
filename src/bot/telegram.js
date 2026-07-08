@@ -1679,6 +1679,167 @@ function createBot() {
     );
   });
 
+  // ── Broadcast to users ─────────────────────────────────────────
+  bot.command("broadcast", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only.");
+      return;
+    }
+
+    const parts = ctx.message.text
+      .replace(/^\/broadcast\s*/i, "")
+      .trim()
+      .split(/\s+/);
+    const type = parts[0] || "";
+    const messageText = parts.slice(1).join(" ");
+
+    if (!messageText) {
+      await ctx.reply(
+        `📢 *Broadcast Usage*\n\n` +
+          `/broadcast all <message> — Send to ALL users\n` +
+          `/broadcast en <message> — Send to English users only\n` +
+          `/broadcast zh <message> — Send to Chinese users only\n` +
+          `/broadcast test <message> — Send to admins only (test)\n\n` +
+          `Example: /broadcast all 🚀 New update: You can now rent numbers!`,
+        { parse_mode: "Markdown" },
+      );
+      return;
+    }
+
+    // 确认广播
+    const targetDesc =
+      type === "all"
+        ? "ALL users"
+        : type === "en"
+          ? "English users"
+          : type === "zh"
+            ? "Chinese users"
+            : type === "test"
+              ? "TEST (admins only)"
+              : "Unknown target";
+
+    await ctx.reply(
+      `⚠️ *Confirm Broadcast*\n\n` +
+        `Target: ${targetDesc}\n` +
+        `Message: ${messageText}\n\n` +
+        `This will send a message to ALL users. Are you sure?`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              "✅ Confirm Send",
+              `broadcast_confirm_${type}_${encodeURIComponent(messageText)}`,
+            ),
+            Markup.button.callback("❌ Cancel", "broadcast_cancel"),
+          ],
+        ]),
+      },
+    );
+  });
+
+  // ── Broadcast confirmation ──────────────────────────────────────
+  bot.action(/^broadcast_confirm_(all|en|zh|test)_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!isAdmin(ctx.from.id)) return;
+
+    const type = ctx.match[1];
+    const messageText = decodeURIComponent(ctx.match[2]);
+    const adminId = ctx.from.id;
+
+    // 获取目标用户
+    let users = [];
+    try {
+      const allUsers = await getAllTelegramUsers();
+
+      if (type === "all") {
+        users = allUsers;
+      } else if (type === "en") {
+        users = allUsers.filter((u) => u.language === "en");
+      } else if (type === "zh") {
+        users = allUsers.filter((u) => u.language === "zh-CN");
+      } else if (type === "test") {
+        // 只发送给管理员自己测试
+        users = [{ telegramId: Number(adminId), language: "en" }];
+      }
+    } catch (err) {
+      await ctx.reply(`❌ Failed to fetch users: ${err.message}`);
+      return;
+    }
+
+    if (users.length === 0) {
+      await ctx.reply("❌ No users found for the selected target.");
+      return;
+    }
+
+    // 更新原消息为“发送中”
+    await ctx.editMessageText(
+      `📡 *Broadcasting...*\n\nTarget: ${type}\nTotal users: ${users.length}\nMessage: ${messageText}\n\nSending... 0/${users.length}`,
+      { parse_mode: "Markdown" },
+    );
+
+    // 分批发送（每批 30 条，间隔 1 秒）
+    const BATCH_SIZE = 30;
+    const DELAY_MS = 1000;
+    let sent = 0;
+    let failed = 0;
+
+    for (let i = 0; i < users.length; i += BATCH_SIZE) {
+      const batch = users.slice(i, i + BATCH_SIZE);
+
+      await Promise.all(
+        batch.map(async (user) => {
+          try {
+            // 根据用户语言决定消息
+            let finalMessage = messageText;
+            if (user.language === "zh-CN") {
+              // 如果原消息是英文，可以添加中文翻译前缀，或使用翻译服务
+              // 这里简单处理：发送原消息 + 提示语言
+              finalMessage = `${messageText}\n\n[Sent in English]`;
+            }
+            await ctx.telegram.sendMessage(user.telegramId, finalMessage);
+            sent++;
+          } catch (err) {
+            failed++;
+            console.error(
+              `Broadcast failed to user ${user.telegramId}:`,
+              err.message,
+            );
+          }
+        }),
+      );
+
+      // 更新进度（每批更新一次）
+      const progress = Math.min(i + BATCH_SIZE, users.length);
+      await ctx.editMessageText(
+        `📡 *Broadcasting...*\n\nTarget: ${type}\nTotal users: ${users.length}\nMessage: ${messageText}\n\nSending... ${progress}/${users.length} (${failed} failed)`,
+        { parse_mode: "Markdown" },
+      );
+
+      // 批次间延迟
+      if (i + BATCH_SIZE < users.length) {
+        await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+      }
+    }
+
+    // 最终结果
+    await ctx.editMessageText(
+      `✅ *Broadcast Complete*\n\n` +
+        `Target: ${type}\n` +
+        `Total users: ${users.length}\n` +
+        `✅ Sent: ${sent}\n` +
+        `❌ Failed: ${failed}\n` +
+        `Message: ${messageText}`,
+      { parse_mode: "Markdown" },
+    );
+  });
+
+  // ── Broadcast cancel ─────────────────────────────────────────────
+  bot.action("broadcast_cancel", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText("❌ Broadcast cancelled.");
+  });
+
   // ── Payments ─────────────────────────────────────────────────
   bot.on("pre_checkout_query", async (ctx) => {
     await ctx.answerPreCheckoutQuery(true);
