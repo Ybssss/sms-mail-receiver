@@ -225,6 +225,19 @@ function replyKeyboard(token, userId) {
   return Markup.keyboard(rows).resize();
 }
 
+// ── Admin keyboard ─────────────────────────────────────────────
+function adminReplyKeyboard(token, userId) {
+  const appUrl = webAppUrl(token);
+  const base = replyKeyboard(token, userId).reply_markup; // 保留用户键盘
+  // 在用户键盘基础上追加一行管理员按钮
+  const extraRow = [
+    Markup.button.callback("📋 Pending Payments", "admin_pending"),
+    Markup.button.callback("👥 Users", "admin_users"),
+  ];
+  const keyboard = base.keyboard ? [...base.keyboard, extraRow] : [extraRow];
+  return Markup.keyboard(keyboard).resize();
+}
+
 async function findTokenForOrder(order) {
   const { getDb } = require("../db/database");
   const d = getDb();
@@ -345,18 +358,31 @@ function createBot() {
     const appUrl = webAppUrl(user.accessToken);
     const message = t(lang, "hi", name);
 
-    // 构建内联键盘（仅 Web App 按钮）
-    const inlineKeyboard = appUrl
-      ? Markup.inlineKeyboard([
-          [Markup.button.webApp("🌐 Open Dashboard", appUrl)],
-        ])
+    // 检查是否为管理员
+    const isAdminUser = isAdmin(ctx.from.id);
+
+    // 构建内联键盘（Web App + 管理员额外按钮）
+    const inlineButtons = [];
+    if (appUrl) {
+      inlineButtons.push([Markup.button.webApp("🌐 Open Dashboard", appUrl)]);
+    }
+    if (isAdminUser) {
+      inlineButtons.push([
+        Markup.button.callback("🔐 Admin Panel", "admin_panel"),
+      ]);
+    }
+    const inlineKeyboard = inlineButtons.length
+      ? Markup.inlineKeyboard(inlineButtons)
       : undefined;
 
-    // 发送消息，启用 Markdown 解析
+    // 选择键盘：管理员使用 adminReplyKeyboard，普通用户使用原键盘
+    const keyboard = isAdminUser
+      ? adminReplyKeyboard(user.accessToken, user.telegramId).reply_markup
+      : replyKeyboard(user.accessToken, user.telegramId).reply_markup;
+
     await ctx.reply(message, {
       parse_mode: "Markdown",
-      reply_markup: replyKeyboard(user.accessToken, user.telegramId)
-        .reply_markup,
+      reply_markup: keyboard,
       ...(inlineKeyboard ? inlineKeyboard : {}),
     });
   });
@@ -519,43 +545,114 @@ function createBot() {
   });
 
   // ── Admin: reply / block / unblock ───────────────────────────
-  bot.action(/^admin_reply_(\d+)_(.+)$/, async (ctx) => {
+  // ── Admin callback handlers ────────────────────────────────────
+  bot.action("admin_panel", async (ctx) => {
+    await ctx.answerCbQuery();
     if (!isAdmin(ctx.from.id)) {
-      await ctx.answerCbQuery("Admin only");
+      await ctx.reply("Admin only.");
       return;
     }
-    const userId = parseInt(ctx.match[1], 10);
-    const code = ctx.match[2];
+    // 调用 /admin 命令逻辑
+    await ctx.reply("🔐 *Admin Panel*\nChoose an action:", {
+      parse_mode: "Markdown",
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback("📋 Pending Payments", "admin_pending")],
+        [Markup.button.callback("👥 List Users", "admin_users")],
+        [Markup.button.callback("📊 Dashboard", "admin_stats")],
+        [Markup.button.callback("❌ Close", "admin_close")],
+      ]),
+    });
+  });
+
+  bot.action("admin_pending", async (ctx) => {
     await ctx.answerCbQuery();
+    if (!isAdmin(ctx.from.id)) return;
+    // 重新触发 /approve 命令（无参数，列出待付款）
+    const d = getDb();
+    const pending = await d
+      .collection("payments")
+      .aggregate([
+        {
+          $match: {
+            provider: { $in: ["manual_tng", "manual_bank"] },
+            status: { $in: ["pending", "pending_review"] },
+          },
+        },
+        {
+          $lookup: {
+            from: "users",
+            localField: "user_id",
+            foreignField: "telegram_id",
+            as: "u",
+          },
+        },
+        { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+        { $sort: { _id: 1 } },
+        { $limit: 20 },
+      ])
+      .toArray();
+    if (!pending.length) {
+      await ctx.reply("No pending manual payments.");
+      return;
+    }
+    // 发送列表，每个附带批准/拒绝按钮
+    for (const p of pending) {
+      const id = p._id.toString();
+      const caption =
+        `📋 #${id.slice(-6)} · RM ${p.amount_myr} → ${formatGems(p.gems)} · ${p.provider}\n` +
+        `👤 ${p.u?.telegram_id || p.user_id}` +
+        (p.status === "pending_review" ? " 📎" : "");
+      await ctx.reply(caption, {
+        reply_markup: Markup.inlineKeyboard([
+          [
+            Markup.button.callback("✅ Approve", `confirm_approve_${id}`),
+            Markup.button.callback("❌ Reject", `confirm_reject_${id}`),
+          ],
+        ]),
+      });
+    }
+  });
+
+  bot.action("admin_users", async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!isAdmin(ctx.from.id)) return;
+    // 调用 /users 命令（可复用其逻辑）
+    const d = getDb();
+    const users = await d
+      .collection("users")
+      .find()
+      .sort({ created_at: -1 })
+      .limit(10)
+      .toArray();
+    if (!users.length) {
+      await ctx.reply("No users.");
+      return;
+    }
+    const lines = users.map(
+      (u, i) =>
+        `#${i + 1} ID: ...${u._id.toString().slice(-6)} | 💎 ${formatGems(u.gems_balance || 0)} | ${u.telegram_id ? "TG:" + u.telegram_id : "Web"}`,
+    );
+    await ctx.reply(`👥 Recent users:\n${lines.join("\n")}`);
+  });
+
+  bot.action("admin_stats", async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!isAdmin(ctx.from.id)) return;
+    // 调用 /stats 逻辑（可复用）
+    const d = getDb();
+    const [users, orders, payments] = await Promise.all([
+      d.collection("users").countDocuments(),
+      d.collection("email_orders").countDocuments(),
+      d.collection("payments").countDocuments({ status: "paid" }),
+    ]);
     await ctx.reply(
-      `Redirect message to user ${userId}: /reply ${userId} #${code} <your message>`,
+      `📊 Stats\n👥 ${users} users\n📧 ${orders} orders\n💰 ${payments} paid`,
     );
   });
 
-  bot.action(/^admin_block_(\d+)$/, async (ctx) => {
-    if (!isAdmin(ctx.from.id)) {
-      await ctx.answerCbQuery("Admin only");
-      return;
-    }
-    const userId = parseInt(ctx.match[1], 10);
-    blockUser(userId, "Admin block", ctx.from.id);
-    await ctx.answerCbQuery("User blocked ✅");
-    try {
-      await ctx.editMessageReplyMarkup(undefined);
-    } catch {}
-  });
-
-  bot.action(/^admin_unblock_(\d+)$/, async (ctx) => {
-    if (!isAdmin(ctx.from.id)) {
-      await ctx.answerCbQuery("Admin only");
-      return;
-    }
-    const userId = parseInt(ctx.match[1], 10);
-    unblockUser(userId);
-    await ctx.answerCbQuery("User unblocked ✅");
-    try {
-      await ctx.editMessageReplyMarkup(undefined);
-    } catch {}
+  bot.action("admin_close", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.deleteMessage().catch(() => {});
   });
 
   bot.command("block", async (ctx) => {
@@ -1218,6 +1315,35 @@ function createBot() {
     } catch (err) {
       await ctx.reply(`Failed: ${err.message}`);
     }
+  });
+
+  bot.command("adminhelp", async (ctx) => {
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only.");
+      return;
+    }
+    await ctx.reply(
+      `🔐 *Admin Commands*\n\n` +
+        `/admin — Dashboard overview\n` +
+        `/approve [id] — List pending payments or approve specific ID\n` +
+        `/reject <id> — Reject a payment\n` +
+        `/revoke <id> — Revoke an approved payment\n` +
+        `/users [page] — List users\n` +
+        `/user <telegram_id> — Show user details\n` +
+        `/stats — Quick stats\n` +
+        `/block <user_id> — Block a user\n` +
+        `/unblock <user_id> — Unblock a user\n` +
+        `/blocked — List blocked users\n` +
+        `/reply <user_id> <message> — Send a message to user\n` +
+        `/setqr_tng — Set TnG QR (reply to photo)\n` +
+        `/setqr_bank — Set Bank QR (reply to photo)\n` +
+        `/balanceapi — Check SMS API balance\n` +
+        `/countries — List SMS countries\n` +
+        `/setcountry <id> — Set default country\n` +
+        `/webhook — Show webhook URL\n\n` +
+        `💡 Use /admin for a quick panel.`,
+      { parse_mode: "Markdown" },
+    );
   });
 
   // ── Payments ─────────────────────────────────────────────────
