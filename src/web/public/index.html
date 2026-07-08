@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-cache, no-store, must-revalidate"
+    />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Hero-SMS Receiver</title>
@@ -76,9 +79,18 @@
         <p class="hint" id="topup-result"></p>
         <div id="topup-confirm-section" class="topup-confirm hidden">
           <p class="hint upload-hint">📸 Upload payment receipt to confirm</p>
-          <label for="payment-proof-input" class="sr-only">Payment receipt image</label>
-          <input id="payment-proof-input" type="file" accept="image/*" aria-label="Upload payment receipt" />
-          <button type="button" id="confirm-payment-btn" class="confirm-btn">Send Payment Proof</button>
+          <label for="payment-proof-input" class="sr-only"
+            >Payment receipt image</label
+          >
+          <input
+            id="payment-proof-input"
+            type="file"
+            accept="image/*"
+            aria-label="Upload payment receipt"
+          />
+          <button type="button" id="confirm-payment-btn" class="confirm-btn">
+            Send Payment Proof
+          </button>
           <p class="hint" id="confirm-payment-result"></p>
         </div>
         <p class="hint hidden" id="processing-fee-hint">
@@ -86,8 +98,8 @@
           GrabPay).
         </p>
 
-        <div id="payment-history" class="hidden" style="margin-top: 16px;">
-          <h3 style="margin-bottom: 8px;">💳 Payment History</h3>
+        <div id="payment-history" class="hidden" style="margin-top: 16px">
+          <h3 style="margin-bottom: 8px">💳 Payment History</h3>
           <div id="payment-history-list"></div>
         </div>
       </section>
@@ -96,7 +108,11 @@
         <h2>📧 Email Activation</h2>
         <form id="order-form" class="order-form">
           <label for="service-select" class="sr-only">Email service</label>
-          <select id="service-select" aria-label="Select an email service" required>
+          <select
+            id="service-select"
+            aria-label="Select an email service"
+            required
+          >
             <option value="">Loading services...</option>
           </select>
           <button type="submit">Order now</button>
@@ -113,12 +129,16 @@
           Choose country → service with prices → order SMS number
         </p>
         <div class="sms-country-row">
-          <label for="sms-country-select" class="country-label">🌍 Country:</label>
+          <label for="sms-country-select" class="country-label"
+            >🌍 Country:</label
+          >
           <select id="sms-country-select" aria-label="Select SMS country">
             <option value="">Loading countries...</option>
           </select>
         </div>
-        <label for="sms-service-search" class="sr-only">Search SMS services</label>
+        <label for="sms-service-search" class="sr-only"
+          >Search SMS services</label
+        >
         <input
           id="sms-service-search"
           type="text"
@@ -179,6 +199,52 @@
         </p>
       </section>
     </main>
+
+    <section class="panel" id="transactions-panel">
+      <div class="panel-head">
+        <h2>📜 Transaction History</h2>
+        <button type="button" id="tx-refresh-btn" class="btn-secondary">
+          Refresh
+        </button>
+      </div>
+      <div
+        class="transaction-controls"
+        style="
+          display: flex;
+          gap: 12px;
+          margin-bottom: 12px;
+          align-items: center;
+        "
+      >
+        <label for="tx-type-filter">Filter:</label>
+        <select id="tx-type-filter" aria-label="Filter transactions">
+          <option value="all">All types</option>
+          <option value="credit">💳 Top-ups</option>
+          <option value="debit">📱 Orders / SMS</option>
+          <option value="refund">↩️ Refunds</option>
+        </select>
+      </div>
+      <div id="transactions-list"></div>
+      <div
+        id="tx-pagination"
+        style="
+          display: flex;
+          justify-content: center;
+          gap: 12px;
+          margin-top: 16px;
+          align-items: center;
+        "
+      >
+        <button id="tx-prev" class="btn-secondary" aria-label="Previous page">
+          ← Prev
+        </button>
+        <span id="tx-page-info">Page 1</span>
+        <button id="tx-next" class="btn-secondary" aria-label="Next page">
+          Next →
+        </button>
+      </div>
+      <p id="tx-empty" class="empty-state hidden">No transactions yet.</p>
+    </section>
 
     <!-- Confirmation modal for misclick prevention -->
     <div id="confirm-modal" class="modal-overlay hidden">

@@ -46,7 +46,22 @@ const {
 const LANG = {
   en: {
     hi: (name) =>
-      `Hi ${name}! 👋\n\nWelcome to SMS Mail Receiver.\nUse the buttons below or open the web dashboard:\n🌐 Open App`,
+      `Hi ${name}! 👋\n\nWelcome to *SMS Mail Receiver* — your one-stop service for temporary SMS and email activation.\n\n` +
+      `💎 *How to pay / top up gems:*\n` +
+      `1. Tap the *"➕ Top up"* button below\n` +
+      `2. Enter amount (min RM 5)\n` +
+      `3. Choose *TnG* or *Bank Transfer*\n` +
+      `4. Transfer to the provided account/QR\n` +
+      `5. Upload receipt in the Web App\n` +
+      `6. Wait for admin approval (gems credited automatically)\n\n` +
+      `💰 *Check your balance:*\n` +
+      `• Tap *"💎 Balance"* button below\n` +
+      `• Or open the Web App (balance shown at top)\n\n` +
+      `📊 *Check service prices:*\n` +
+      `• Open Web App → select email or SMS service\n` +
+      `• Gem cost is shown next to each service\n` +
+      `• Use /domains to list email domain prices\n\n` +
+      `👉 Use the buttons below or open the Web App to get started!`,
     balance: (bal, rate) =>
       `💎 Balance: ${bal} gems\n📊 Rate: 1 MYR = ${rate} gems`,
     noGems: "You have no gems. Tap ➕ Top up to buy gems.",
@@ -79,7 +94,22 @@ const LANG = {
   },
   "zh-CN": {
     hi: (name) =>
-      `你好 ${name}！👋\n\n欢迎使用SMS邮件接收器。\n使用下方按钮或打开网页面板：\n🌐 打开应用`,
+      `你好 ${name}！👋\n\n欢迎使用 *SMS邮件接收器* — 一站式临时短信和邮箱激活服务。\n\n` +
+      `💎 *如何支付/充值宝石:*\n` +
+      `1. 点击下方 *"➕ 充值"* 按钮\n` +
+      `2. 输入金额（最低 RM 5）\n` +
+      `3. 选择 *TnG* 或 *银行转账*\n` +
+      `4. 转账到提供的账户/二维码\n` +
+      `5. 在网页应用中上传付款凭证\n` +
+      `6. 等待管理员审核（宝石自动到账）\n\n` +
+      `💰 *查看余额:*\n` +
+      `• 点击下方 *"💎 余额"* 按钮\n` +
+      `• 或打开网页应用（顶部显示余额）\n\n` +
+      `📊 *查看价格:*\n` +
+      `• 打开网页应用 → 选择邮箱或短信服务\n` +
+      `• 每个服务旁边显示宝石价格\n` +
+      `• 使用 /domains 查看邮箱域名价格\n\n` +
+      `👉 使用下方按钮或打开网页应用开始使用！`,
     balance: (bal, rate) =>
       `💎 余额: ${bal} 宝石\n📊 汇率: 1 MYR = ${rate} 宝石`,
     noGems: "您没有宝石。请点击 ➕ 充值。",
@@ -156,7 +186,11 @@ async function findTokenForOrder(order) {
   const d = getDb();
   const { ObjectId } = require("mongodb");
   let orderFilter;
-  try { orderFilter = { _id: new ObjectId(String(order.id)) }; } catch { orderFilter = { hero_id: order.heroId || order.id }; }
+  try {
+    orderFilter = { _id: new ObjectId(String(order.id)) };
+  } catch {
+    orderFilter = { hero_id: order.heroId || order.id };
+  }
   const eOrder = await d.collection("email_orders").findOne(orderFilter);
   if (!eOrder) return "";
   const userDoc = await d.collection("users").findOne({ _id: eOrder.user_id });
@@ -226,10 +260,16 @@ function createBot() {
     const d = getDb();
     const { ObjectId } = require("mongodb");
     let orderFilter;
-    try { orderFilter = { _id: new ObjectId(String(order.id)) }; } catch { orderFilter = { hero_id: order.heroId || order.id }; }
+    try {
+      orderFilter = { _id: new ObjectId(String(order.id)) };
+    } catch {
+      orderFilter = { hero_id: order.heroId || order.id };
+    }
     const eOrder = await d.collection("email_orders").findOne(orderFilter);
     if (!eOrder) return;
-    const userDoc = await d.collection("users").findOne({ _id: eOrder.user_id });
+    const userDoc = await d
+      .collection("users")
+      .findOne({ _id: eOrder.user_id });
     if (!userDoc?.telegram_id) return;
     try {
       await bot.telegram.sendMessage(
@@ -244,7 +284,7 @@ function createBot() {
 
   // ── Block check middleware ────────────────────────────────────
   bot.use(async (ctx, next) => {
-    if (ctx.from && await isUserBlocked(ctx.from.id)) {
+    if (ctx.from && (await isUserBlocked(ctx.from.id))) {
       try {
         await ctx.reply(t(getUserLang(ctx.from.id), "blocked"));
       } catch {}
@@ -259,17 +299,21 @@ function createBot() {
     const lang = getUserLang(user.telegramId);
     const name = ctx.from?.first_name || "there";
     const appUrl = webAppUrl(user.accessToken);
-    const lines = [t(lang, "hi", name), ""];
-    if (!appUrl) lines.push("WEBAPP_URL not configured.");
-    const extra = appUrl
+    const message = t(lang, "hi", name);
+
+    // 构建内联键盘（仅 Web App 按钮）
+    const inlineKeyboard = appUrl
       ? Markup.inlineKeyboard([
           [Markup.button.webApp("🌐 Open Dashboard", appUrl)],
         ])
       : undefined;
-    await ctx.reply(lines.join("\n"), {
+
+    // 发送消息，启用 Markdown 解析
+    await ctx.reply(message, {
+      parse_mode: "Markdown",
       reply_markup: replyKeyboard(user.accessToken, user.telegramId)
         .reply_markup,
-      ...(extra ? extra : {}),
+      ...(inlineKeyboard ? inlineKeyboard : {}),
     });
   });
 
@@ -549,7 +593,10 @@ function createBot() {
 
   // ── Admin commands ──────────────────────────────────────────────
   bot.command("admin", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     try {
       const { getDb } = require("../db/database");
       const d = getDb();
@@ -559,70 +606,122 @@ function createBot() {
         d.collection("payments").countDocuments({ status: "paid" }),
       ]);
       let apiBalance = "N/A";
-      try { const { getBalance } = require("../services/smsActivate"); const b = await getBalance(); apiBalance = `${b.balance} ${b.currency}`; } catch {}
-      await ctx.reply([
-        "🔐 Admin Dashboard",
-        `👥 Users: ${userCount}`,
-        `📧 Orders: ${orderCount}`,
-        `💰 Paid: ${paidCount}`,
-        `🏦 API Balance: ${apiBalance}`,
-        "",
-        "Commands: /approve /reject /revoke /users /user /stats",
-      ].join("\n"));
-    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+      try {
+        const { getBalance } = require("../services/smsActivate");
+        const b = await getBalance();
+        apiBalance = `${b.balance} ${b.currency}`;
+      } catch {}
+      await ctx.reply(
+        [
+          "🔐 Admin Dashboard",
+          `👥 Users: ${userCount}`,
+          `📧 Orders: ${orderCount}`,
+          `💰 Paid: ${paidCount}`,
+          `🏦 API Balance: ${apiBalance}`,
+          "",
+          "Commands: /approve /reject /revoke /users /user /stats",
+        ].join("\n"),
+      );
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
   });
 
   bot.command("users", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     try {
       const d = getDb();
-      const page = parseInt(ctx.message.text.replace(/^\/users\s*/i, ""), 10) || 1;
+      const page =
+        parseInt(ctx.message.text.replace(/^\/users\s*/i, ""), 10) || 1;
       const skip = (page - 1) * 10;
-      const users = await d.collection("users").find().sort({ created_at: -1 }).skip(skip).limit(10).toArray();
-      if (!users.length) { await ctx.reply("No users found."); return; }
+      const users = await d
+        .collection("users")
+        .find()
+        .sort({ created_at: -1 })
+        .skip(skip)
+        .limit(10)
+        .toArray();
+      if (!users.length) {
+        await ctx.reply("No users found.");
+        return;
+      }
       const lines = users.map((u, i) => {
         const uid = u._id ? u._id.toString().slice(-6) : "?";
         return `#${skip + i + 1} ID: ...${uid} | 💎 ${formatGems(u.gems_balance || 0)} | ${u.telegram_id ? "TG:" + u.telegram_id : "Web"}`;
       });
-      await ctx.reply(`Users (page ${page}):\n${lines.join("\n")}\n\nUse /user <telegram_id> for details`);
-    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+      await ctx.reply(
+        `Users (page ${page}):\n${lines.join("\n")}\n\nUse /user <telegram_id> for details`,
+      );
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
   });
 
   bot.command("user", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     const tgId = ctx.message.text.replace(/^\/user\s*/i, "").trim();
-    if (!tgId) { await ctx.reply("Usage: /user <telegram_id>"); return; }
+    if (!tgId) {
+      await ctx.reply("Usage: /user <telegram_id>");
+      return;
+    }
     try {
       const d = getDb();
-      const user = await d.collection("users").findOne({ telegram_id: String(tgId) });
-      if (!user) { await ctx.reply("User not found."); return; }
+      const user = await d
+        .collection("users")
+        .findOne({ telegram_id: String(tgId) });
+      if (!user) {
+        await ctx.reply("User not found.");
+        return;
+      }
       const userId = user._id.toString();
       const [orders, payments] = await Promise.all([
         d.collection("email_orders").countDocuments({ user_id: userId }),
-        d.collection("payments").countDocuments({ user_id: userId, status: "paid" }),
+        d
+          .collection("payments")
+          .countDocuments({ user_id: userId, status: "paid" }),
       ]);
-      await ctx.reply([
-        `👤 User: ${user.telegram_id || "Web only"}`,
-        `🆔 DB ID: #usr_${userId.slice(-8)}`,
-        `💎 Balance: ${formatGems(user.gems_balance || 0)}`,
-        `📧 Orders: ${orders}`,
-        `💰 Payments: ${payments}`,
-        `📅 Joined: ${user.created_at || "N/A"}`,
-      ].join("\n"));
-    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+      await ctx.reply(
+        [
+          `👤 User: ${user.telegram_id || "Web only"}`,
+          `🆔 DB ID: #usr_${userId.slice(-8)}`,
+          `💎 Balance: ${formatGems(user.gems_balance || 0)}`,
+          `📧 Orders: ${orders}`,
+          `💰 Payments: ${payments}`,
+          `📅 Joined: ${user.created_at || "N/A"}`,
+        ].join("\n"),
+      );
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
   });
 
   bot.command("balanceapi", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     try {
       const { getBalance } = require("../services/smsActivate");
       const bal = await getBalance();
-      await ctx.reply(`🏦 Hero-SMS API Balance: ${bal.balance} ${bal.currency}`);
-    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+      await ctx.reply(
+        `🏦 Hero-SMS API Balance: ${bal.balance} ${bal.currency}`,
+      );
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
   });
 
   bot.command("stats", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     try {
       const d = getDb();
       const [users, orders, payments] = await Promise.all([
@@ -630,43 +729,78 @@ function createBot() {
         d.collection("email_orders").countDocuments(),
         d.collection("payments").countDocuments({ status: "paid" }),
       ]);
-      await ctx.reply(`📊 Stats\n👥 ${users} users\n📧 ${orders} orders\n💰 ${payments} paid`);
-    } catch (err) { await ctx.reply(`Error: ${err.message}`); }
+      await ctx.reply(
+        `📊 Stats\n👥 ${users} users\n📧 ${orders} orders\n💰 ${payments} paid`,
+      );
+    } catch (err) {
+      await ctx.reply(`Error: ${err.message}`);
+    }
   });
 
   // ── Approve with double confirm ───────────────────────────────
   bot.command("approve", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     const id = parseInt(ctx.message.text.replace(/^\/approve\s*/i, ""), 10);
     if (!id) {
       const d = getDb();
-      const pending = await d.collection("payments").aggregate([
-        { $match: { provider: { $in: ["manual_tng", "manual_bank"] }, status: { $in: ["pending", "pending_review"] } } },
-        { $lookup: { from: "users", localField: "user_id", foreignField: "telegram_id", as: "u" } },
-        { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
-        { $sort: { _id: 1 } },
-        { $limit: 20 },
-      ]).toArray();
-      if (!pending.length) { await ctx.reply("No pending manual payments."); return; }
-      await ctx.reply([
-        "📋 Pending manual payments:",
-        ...pending.map((p) => `#${p._id.toString().slice(-6)} RM${p.amount_myr} → ${formatGems(p.gems)} (${p.provider}) ${p.status === "pending_review" ? "📎" : ""}`),
-        "",
-        "Use /approve <id> to approve with confirmation",
-      ].join("\n"));
+      const pending = await d
+        .collection("payments")
+        .aggregate([
+          {
+            $match: {
+              provider: { $in: ["manual_tng", "manual_bank"] },
+              status: { $in: ["pending", "pending_review"] },
+            },
+          },
+          {
+            $lookup: {
+              from: "users",
+              localField: "user_id",
+              foreignField: "telegram_id",
+              as: "u",
+            },
+          },
+          { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+          { $sort: { _id: 1 } },
+          { $limit: 20 },
+        ])
+        .toArray();
+      if (!pending.length) {
+        await ctx.reply("No pending manual payments.");
+        return;
+      }
+      await ctx.reply(
+        [
+          "📋 Pending manual payments:",
+          ...pending.map(
+            (p) =>
+              `#${p._id.toString().slice(-6)} RM${p.amount_myr} → ${formatGems(p.gems)} (${p.provider}) ${p.status === "pending_review" ? "📎" : ""}`,
+          ),
+          "",
+          "Use /approve <id> to approve with confirmation",
+        ].join("\n"),
+      );
       return;
     }
     // Show confirmation before approving
     const d = getDb();
     const { ObjectId } = require("mongodb");
-    const payment = await d.collection("payments").findOne({ _id: new ObjectId(String(id)) });
-    if (!payment) { await ctx.reply("Payment not found."); return; }
+    const payment = await d
+      .collection("payments")
+      .findOne({ _id: new ObjectId(String(id)) });
+    if (!payment) {
+      await ctx.reply("Payment not found.");
+      return;
+    }
     await ctx.reply(
       `Confirm: Approve #${id}?\n💰 RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems\n👤 user_id: ${payment.user_id}\n\nThis will credit the user's account.`,
       Markup.inlineKeyboard([
         [Markup.button.callback("✅ Confirm Approve", `confirm_approve_${id}`)],
         [Markup.button.callback("❌ Cancel", `confirm_cancel`)],
-      ])
+      ]),
     );
   });
 
@@ -678,21 +812,39 @@ function createBot() {
     try {
       const result = await adminApprovePayment(id);
       const text = `✅ Approved #${id}. Credited ${formatGems(result.gems)} gems.`;
-      try { await ctx.editMessageText(text); }
-      catch { try { await ctx.reply(text); } catch {} }
+      try {
+        await ctx.editMessageText(text);
+      } catch {
+        try {
+          await ctx.reply(text);
+        } catch {}
+      }
       // Notify user — lookup telegram_id from users collection
       try {
         const d = getDb();
         const { ObjectId: OId } = require("mongodb");
-        const payment = await d.collection("payments").findOne({ _id: new OId(String(id)) });
+        const payment = await d
+          .collection("payments")
+          .findOne({ _id: new OId(String(id)) });
         if (payment?.user_id) {
-          const userDoc = await d.collection("users").findOne({ _id: typeof payment.user_id === "string" && payment.user_id.length === 24 ? new OId(payment.user_id) : payment.user_id });
+          const userDoc = await d.collection("users").findOne({
+            _id:
+              typeof payment.user_id === "string" &&
+              payment.user_id.length === 24
+                ? new OId(payment.user_id)
+                : payment.user_id,
+          });
           const tgId = userDoc?.telegram_id;
           if (tgId) {
             try {
               const balance = await getUserBalance(payment.user_id);
-              await ctx.telegram.sendMessage(tgId, `✅ Your payment #${id} has been approved!\n\n💰 RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems\n💎 New Balance: ${formatGems(balance)} gems`);
-            } catch (e) { console.error("Failed to notify user of approval:", e.message); }
+              await ctx.telegram.sendMessage(
+                tgId,
+                `✅ Your payment #${id} has been approved!\n\n💰 RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems\n💎 New Balance: ${formatGems(balance)} gems`,
+              );
+            } catch (e) {
+              console.error("Failed to notify user of approval:", e.message);
+            }
           }
         }
       } catch {}
@@ -700,15 +852,24 @@ function createBot() {
       // Also notify admin about the updated balance
       try {
         const d = getDb();
-        const payment = await d.collection("payments").findOne({ _id: new (require("mongodb").ObjectId)(String(id)) });
+        const payment = await d
+          .collection("payments")
+          .findOne({ _id: new (require("mongodb").ObjectId)(String(id)) });
         if (payment?.user_id) {
           const balance = await getUserBalance(payment.user_id);
-          await ctx.reply(`💎 User balance is now: ${formatGems(balance)} gems`);
+          await ctx.reply(
+            `💎 User balance is now: ${formatGems(balance)} gems`,
+          );
         }
       } catch {}
     } catch (err) {
-      try { await ctx.editMessageText(`❌ Approve failed: ${err.message}`); }
-      catch { try { await ctx.reply(`❌ Approve failed: ${err.message}`); } catch {} }
+      try {
+        await ctx.editMessageText(`❌ Approve failed: ${err.message}`);
+      } catch {
+        try {
+          await ctx.reply(`❌ Approve failed: ${err.message}`);
+        } catch {}
+      }
     }
   });
 
@@ -719,19 +880,30 @@ function createBot() {
 
   // ── Reject with double confirm ────────────────────────────────
   bot.command("reject", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     const id = parseInt(ctx.message.text.replace(/^\/reject\s*/i, ""), 10);
-    if (!id) { await ctx.reply("Usage: /reject <payment_id>"); return; }
+    if (!id) {
+      await ctx.reply("Usage: /reject <payment_id>");
+      return;
+    }
     const d = getDb();
     const { ObjectId } = require("mongodb");
-    const payment = await d.collection("payments").findOne({ _id: new ObjectId(String(id)) });
-    if (!payment) { await ctx.reply("Payment not found."); return; }
+    const payment = await d
+      .collection("payments")
+      .findOne({ _id: new ObjectId(String(id)) });
+    if (!payment) {
+      await ctx.reply("Payment not found.");
+      return;
+    }
     await ctx.reply(
       `Confirm: REJECT #${id}?\n💰 RM ${payment.amount_myr}\n\nUser will NOT receive gems.`,
       Markup.inlineKeyboard([
         [Markup.button.callback("❌ Confirm Reject", `confirm_reject_${id}`)],
         [Markup.button.callback("↩ Cancel", `confirm_cancel`)],
-      ])
+      ]),
     );
   });
 
@@ -743,30 +915,54 @@ function createBot() {
       const { adminRejectPayment } = require("../services/payments");
       await adminRejectPayment(id);
       const text = `❌ Payment #${id} rejected.`;
-      try { await ctx.editMessageText(text); }
-      catch { try { await ctx.reply(text); } catch {} }
+      try {
+        await ctx.editMessageText(text);
+      } catch {
+        try {
+          await ctx.reply(text);
+        } catch {}
+      }
     } catch (err) {
-      try { await ctx.editMessageText(`❌ Failed: ${err.message}`); }
-      catch { try { await ctx.reply(`❌ Failed: ${err.message}`); } catch {} }
+      try {
+        await ctx.editMessageText(`❌ Failed: ${err.message}`);
+      } catch {
+        try {
+          await ctx.reply(`❌ Failed: ${err.message}`);
+        } catch {}
+      }
     }
   });
 
   // ── Revoke (undo misclick) ────────────────────────────────────
   bot.command("revoke", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     const id = parseInt(ctx.message.text.replace(/^\/revoke\s*/i, ""), 10);
-    if (!id) { await ctx.reply("Usage: /revoke <payment_id> — undo an approved payment"); return; }
+    if (!id) {
+      await ctx.reply("Usage: /revoke <payment_id> — undo an approved payment");
+      return;
+    }
     const d = getDb();
     const { ObjectId } = require("mongodb");
-    const payment = await d.collection("payments").findOne({ _id: new ObjectId(String(id)) });
-    if (!payment) { await ctx.reply("Payment not found."); return; }
-    if (payment.status !== "paid") { await ctx.reply(`Cannot revoke — status is: ${payment.status}`); return; }
+    const payment = await d
+      .collection("payments")
+      .findOne({ _id: new ObjectId(String(id)) });
+    if (!payment) {
+      await ctx.reply("Payment not found.");
+      return;
+    }
+    if (payment.status !== "paid") {
+      await ctx.reply(`Cannot revoke — status is: ${payment.status}`);
+      return;
+    }
     await ctx.reply(
       `⚠️ Revoke #${id}?\n💰 RM ${payment.amount_myr} → ${formatGems(payment.gems)} gems will be DEDUCTED from user.\n\nStatus will reset to pending.`,
       Markup.inlineKeyboard([
         [Markup.button.callback("↩ Confirm Revoke", `confirm_revoke_${id}`)],
         [Markup.button.callback("❌ Cancel", `confirm_cancel`)],
-      ])
+      ]),
     );
   });
 
@@ -778,16 +974,29 @@ function createBot() {
       const { adminRevokePayment } = require("../services/payments");
       const result = await adminRevokePayment(id);
       const text = `↩ ${result.message}`;
-      try { await ctx.editMessageText(text); }
-      catch { try { await ctx.reply(text); } catch {} }
+      try {
+        await ctx.editMessageText(text);
+      } catch {
+        try {
+          await ctx.reply(text);
+        } catch {}
+      }
     } catch (err) {
-      try { await ctx.editMessageText(`❌ Failed: ${err.message}`); }
-      catch { try { await ctx.reply(`❌ Failed: ${err.message}`); } catch {} }
+      try {
+        await ctx.editMessageText(`❌ Failed: ${err.message}`);
+      } catch {
+        try {
+          await ctx.reply(`❌ Failed: ${err.message}`);
+        } catch {}
+      }
     }
   });
 
   bot.command("webhook", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     const url = config.webappUrl
       ? `${config.webappUrl}/webhook/hero-sms`
       : "Not configured";
@@ -795,7 +1004,10 @@ function createBot() {
   });
 
   bot.command("countries", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
     try {
       const countries = await getSmsCountries();
       if (!Array.isArray(countries) || !countries.length) {
@@ -888,30 +1100,58 @@ function createBot() {
 
   // ── QR uploads (admin) ───────────────────────────────────────
   bot.command("setqr_tng", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
-    if (!ctx.message.reply_to_message?.photo) { await ctx.reply("Reply to a photo with /setqr_tng"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
+    if (!ctx.message.reply_to_message?.photo) {
+      await ctx.reply("Reply to a photo with /setqr_tng");
+      return;
+    }
     await ctx.reply("Downloading QR image...");
     try {
       const fileId = ctx.message.reply_to_message.photo.pop().file_id;
       const fileUrl = await ctx.telegram.getFileLink(fileId);
       const d = getDb();
-      await d.collection("app_config").updateOne({ key: "qr_tng_file_id" }, { $set: { key: "qr_tng_file_id", value: fileId } }, { upsert: true });
+      await d
+        .collection("app_config")
+        .updateOne(
+          { key: "qr_tng_file_id" },
+          { $set: { key: "qr_tng_file_id", value: fileId } },
+          { upsert: true },
+        );
       await saveQrImage(fileUrl, "qr-tng.jpg");
       await ctx.reply("✅ TnG QR saved and available in web app!");
-    } catch (err) { await ctx.reply(`Failed: ${err.message}`); }
+    } catch (err) {
+      await ctx.reply(`Failed: ${err.message}`);
+    }
   });
   bot.command("setqr_bank", async (ctx) => {
-    if (!isAdmin(ctx.from.id)) { await ctx.reply("Admin only"); return; }
-    if (!ctx.message.reply_to_message?.photo) { await ctx.reply("Reply to a photo with /setqr_bank"); return; }
+    if (!isAdmin(ctx.from.id)) {
+      await ctx.reply("Admin only");
+      return;
+    }
+    if (!ctx.message.reply_to_message?.photo) {
+      await ctx.reply("Reply to a photo with /setqr_bank");
+      return;
+    }
     await ctx.reply("Downloading QR image...");
     try {
       const fileId = ctx.message.reply_to_message.photo.pop().file_id;
       const fileUrl = await ctx.telegram.getFileLink(fileId);
       const d = getDb();
-      await d.collection("app_config").updateOne({ key: "qr_bank_file_id" }, { $set: { key: "qr_bank_file_id", value: fileId } }, { upsert: true });
+      await d
+        .collection("app_config")
+        .updateOne(
+          { key: "qr_bank_file_id" },
+          { $set: { key: "qr_bank_file_id", value: fileId } },
+          { upsert: true },
+        );
       await saveQrImage(fileUrl, "qr-bank.jpg");
       await ctx.reply("✅ Bank QR saved and available in web app!");
-    } catch (err) { await ctx.reply(`Failed: ${err.message}`); }
+    } catch (err) {
+      await ctx.reply(`Failed: ${err.message}`);
+    }
   });
 
   // ── Payments ─────────────────────────────────────────────────
@@ -956,19 +1196,25 @@ async function saveQrImage(fileUrl, filename) {
           try {
             const buffer = Buffer.concat(chunks);
             const b64 = buffer.toString("base64");
-            const dbKey = filename.includes("tng") ? "qr_tng_base64" : "qr_bank_base64";
+            const dbKey = filename.includes("tng")
+              ? "qr_tng_base64"
+              : "qr_bank_base64";
             const d = getDb();
-            await d.collection("app_config").updateOne(
-              { key: dbKey },
-              { $set: { key: dbKey, value: b64 } },
-              { upsert: true }
-            );
+            await d
+              .collection("app_config")
+              .updateOne(
+                { key: dbKey },
+                { $set: { key: dbKey, value: b64 } },
+                { upsert: true },
+              );
             // Also save to filesystem for static serving
             const dir = path.join(__dirname, "..", "web", "public", "qr");
             fs.mkdirSync(dir, { recursive: true });
             fs.writeFileSync(path.join(dir, filename), buffer);
             resolve();
-          } catch (err) { reject(err); }
+          } catch (err) {
+            reject(err);
+          }
         });
         res.on("error", reject);
       })
@@ -978,7 +1224,7 @@ async function saveQrImage(fileUrl, filename) {
 
 async function launchBot(bot, app) {
   if (!bot) return;
-  
+
   // Register commands for Telegram native / autocomplete
   try {
     // Default commands for all users
@@ -995,30 +1241,39 @@ async function launchBot(bot, app) {
 
     // Admin commands — registered per-chat for each admin
     for (const adminId of config.adminTelegramIds) {
-      await bot.telegram.setMyCommands([
-        { command: "start", description: "Start the bot" },
-        { command: "balance", description: "Check gem balance" },
-        { command: "topup", description: "Top up gems" },
-        { command: "domains", description: "List available email domains" },
-        { command: "list", description: "View active orders" },
-        { command: "web", description: "Open web dashboard" },
-        { command: "help", description: "Show help" },
-        { command: "lang", description: "Switch language (en/zh)" },
-        { command: "admin", description: "Admin dashboard overview" },
-        { command: "approve", description: "Approve or list pending payments" },
-        { command: "reject", description: "Reject a payment" },
-        { command: "revoke", description: "Revoke an approved payment" },
-        { command: "users", description: "List users" },
-        { command: "user", description: "User detail by Telegram ID" },
-        { command: "balanceapi", description: "Check Hero-SMS API balance" },
-        { command: "stats", description: "Quick stats" },
-        { command: "block", description: "Block a user" },
-        { command: "unblock", description: "Unblock a user" },
-        { command: "blocked", description: "List blocked users" },
-        { command: "reply", description: "Reply to a user" },
-        { command: "setqr_tng", description: "Set TnG QR (reply to photo)" },
-        { command: "setqr_bank", description: "Set Bank QR (reply to photo)" },
-      ], { scope: { type: "chat", chat_id: Number(adminId) } });
+      await bot.telegram.setMyCommands(
+        [
+          { command: "start", description: "Start the bot" },
+          { command: "balance", description: "Check gem balance" },
+          { command: "topup", description: "Top up gems" },
+          { command: "domains", description: "List available email domains" },
+          { command: "list", description: "View active orders" },
+          { command: "web", description: "Open web dashboard" },
+          { command: "help", description: "Show help" },
+          { command: "lang", description: "Switch language (en/zh)" },
+          { command: "admin", description: "Admin dashboard overview" },
+          {
+            command: "approve",
+            description: "Approve or list pending payments",
+          },
+          { command: "reject", description: "Reject a payment" },
+          { command: "revoke", description: "Revoke an approved payment" },
+          { command: "users", description: "List users" },
+          { command: "user", description: "User detail by Telegram ID" },
+          { command: "balanceapi", description: "Check Hero-SMS API balance" },
+          { command: "stats", description: "Quick stats" },
+          { command: "block", description: "Block a user" },
+          { command: "unblock", description: "Unblock a user" },
+          { command: "blocked", description: "List blocked users" },
+          { command: "reply", description: "Reply to a user" },
+          { command: "setqr_tng", description: "Set TnG QR (reply to photo)" },
+          {
+            command: "setqr_bank",
+            description: "Set Bank QR (reply to photo)",
+          },
+        ],
+        { scope: { type: "chat", chat_id: Number(adminId) } },
+      );
     }
     console.log("Telegram commands registered (admin + default scopes)");
   } catch (e) {
@@ -1051,8 +1306,12 @@ let botInstance = null;
 module.exports = {
   createBot,
   launchBot,
-  get bot() { return botInstance; },
-  setBotInstance(b) { botInstance = b; },
+  get bot() {
+    return botInstance;
+  },
+  setBotInstance(b) {
+    botInstance = b;
+  },
   webhookUrl: () =>
     config.webappUrl
       ? `${config.webappUrl}/webhook/hero-sms`

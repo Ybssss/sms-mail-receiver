@@ -1074,6 +1074,100 @@ async function runTopup(body) {
   }
 }
 
+// ── Transaction History ─────────────────────────────────────────
+let txCurrentPage = 1;
+const TX_LIMIT = 20;
+
+async function loadTransactions(page = 1, type = "all") {
+  const params = new URLSearchParams({
+    page,
+    limit: TX_LIMIT,
+    type,
+  });
+  try {
+    const data = await api(`/api/wallet/transactions?${params}`);
+    renderTransactions(data.transactions, data.pagination);
+  } catch (err) {
+    console.error("Load transactions error:", err.message);
+    const container = document.getElementById("transactions-list");
+    if (container)
+      container.innerHTML = `<p class="error">Failed to load: ${err.message}</p>`;
+  }
+}
+
+function renderTransactions(transactions, pagination) {
+  const container = document.getElementById("transactions-list");
+  const empty = document.getElementById("tx-empty");
+  const paginationEl = document.getElementById("tx-pagination");
+  if (!container) return;
+
+  if (!transactions || transactions.length === 0) {
+    container.innerHTML = "";
+    if (empty) empty.classList.remove("hidden");
+    if (paginationEl) paginationEl.style.display = "none";
+    return;
+  }
+  if (empty) empty.classList.add("hidden");
+  if (paginationEl) paginationEl.style.display = "flex";
+
+  container.innerHTML = transactions
+    .map((tx) => {
+      const typeLabel =
+        tx.type === "credit"
+          ? "💰 Credit"
+          : tx.type === "debit"
+            ? "💸 Debit"
+            : tx.type === "refund"
+              ? "↩️ Refund"
+              : tx.type;
+      const sign = tx.type === "credit" || tx.type === "refund" ? "+" : "-";
+      const amount = tx.amount
+        ? `${sign}${Math.abs(tx.amount).toLocaleString()} gems`
+        : "";
+      const balance = tx.balance_after || tx.balanceAfter;
+      return `
+      <div class="transaction-item" style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border, #333);">
+        <div>
+          <div style="font-weight:600;">${typeLabel}</div>
+          <div style="font-size:0.85rem;color:var(--muted);">${tx.note || tx.description || ""}</div>
+          <div style="font-size:0.75rem;color:var(--muted);">${new Date(tx.created_at || tx.createdAt).toLocaleString()}</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-weight:700;color:${tx.type === "credit" ? "#4ade80" : tx.type === "debit" ? "#f87171" : "#fbbf24"};">${amount}</div>
+          <div style="font-size:0.75rem;color:var(--muted);">Balance: ${balance?.toLocaleString() || "?"}</div>
+        </div>
+      </div>
+    `;
+    })
+    .join("");
+
+  // 分页控件
+  const pageInfo = document.getElementById("tx-page-info");
+  const prevBtn = document.getElementById("tx-prev");
+  const nextBtn = document.getElementById("tx-next");
+  if (pageInfo)
+    pageInfo.textContent = `Page ${pagination.page} of ${pagination.totalPages}`;
+  if (prevBtn) prevBtn.disabled = pagination.page <= 1;
+  if (nextBtn) nextBtn.disabled = pagination.page >= pagination.totalPages;
+
+  // 事件绑定（使用 onclick 避免重复绑定）
+  if (prevBtn)
+    prevBtn.onclick = () => {
+      if (pagination.page > 1)
+        loadTransactions(pagination.page - 1, getCurrentFilter());
+    };
+  if (nextBtn)
+    nextBtn.onclick = () => {
+      if (pagination.page < pagination.totalPages)
+        loadTransactions(pagination.page + 1, getCurrentFilter());
+    };
+}
+
+function getCurrentFilter() {
+  const sel = document.getElementById("tx-type-filter");
+  return sel ? sel.value : "all";
+}
+
 // ── Payment History ────────────────────────────────────────────
 async function loadPaymentHistory() {
   const paymentHistory = $("payment-history");
@@ -1342,6 +1436,15 @@ tokenSave?.addEventListener("click", async () => {
   }
 });
 
+// ── Transaction History events ──────────────────────────────
+document.getElementById("tx-type-filter")?.addEventListener("change", () => {
+  loadTransactions(1, getCurrentFilter());
+});
+
+document.getElementById("tx-refresh-btn")?.addEventListener("click", () => {
+  loadTransactions(txCurrentPage, getCurrentFilter());
+});
+
 // ── Styles ───────────────────────────────────────────────────────
 const style = document.createElement("style");
 style.textContent = `
@@ -1516,6 +1619,8 @@ async function bootstrap() {
 
   liveStatus.textContent = `Live · ${ordersList?.children?.length || 0} orders`;
   liveStatus.className = "status-pill live";
+  // 加载交易历史（首次默认全部类型）
+  loadTransactions(1, "all").catch(() => {});
   startAutoRefresh();
   console.log("[DEBUG] Bootstrap: complete");
 }
