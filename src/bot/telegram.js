@@ -1739,18 +1739,20 @@ function createBot() {
         `Target: ${targetDesc}\n` +
         `Message: ${messageText}\n\n` +
         `This will send a message to ALL users. Are you sure?`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: Markup.inlineKeyboard([
-          [
-            Markup.button.callback(
-              "✅ Confirm Send",
-              `broadcast_confirm_${broadcastId}`,
-            ),
-            Markup.button.callback("❌ Cancel", "broadcast_cancel"),
-          ],
-        ]),
-      },
+      Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "✅ Confirm Send",
+            `broadcast_confirm_${broadcastId}`,
+          ),
+          Markup.button.callback("❌ Cancel", "broadcast_cancel"),
+        ],
+      ]),
+    );
+    const sent = await ctx.reply(/*...*/);
+    console.log(
+      "[BROADCAST] Sent message reply_markup:",
+      JSON.stringify(sent.reply_markup),
     );
   });
 
