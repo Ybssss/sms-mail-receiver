@@ -66,7 +66,17 @@ const LANG = {
       `💎 Balance: ${bal} gems\n📊 Rate: 1 MYR = ${rate} gems`,
     noGems: "You have no gems. Tap ➕ Top up to buy gems.",
     topup: (rate, methods) =>
-      `Choose a package:\nRate: 1 MYR = ${rate} gems\n\n${methods.map((m) => `• ${m.name}`).join("\n") || "Configure payment env vars."}`,
+      `💎 *Top up gems*\n\n` +
+      `Rate: 1 MYR = ${rate} gems\n` +
+      `Available methods: ${methods.map((m) => m.name).join(", ")}\n\n` +
+      `📌 *How to top up:*\n` +
+      `1. Tap the *"➕ Top up"* button below or use /topup\n` +
+      `2. Enter amount (min RM 5)\n` +
+      `3. Choose *TnG* or *Bank Transfer*\n` +
+      `4. Transfer the exact amount to the provided account/QR\n` +
+      `5. Upload your payment receipt in the Web App\n` +
+      `6. Wait for admin approval — gems will be credited automatically\n\n` +
+      `⚠️ If you need help, contact @admin.`,
     orderEmail:
       "📧 **Email Activation**\nOpen the web dashboard to browse available domains and order.",
     orderSms:
@@ -90,7 +100,19 @@ const LANG = {
     smsActivated: (name, phone, cost, id, expires) =>
       `✅ ${name} SMS Activated!\n📱 ${phone}\n💎 ${cost} gems\n⏳ Expires: ${expires}\n🆔 ${id}\n\nCheck code on dashboard.`,
     blocked: "You are blocked from using this bot.",
-    help: "Commands: /start /balance /topup /domains /list /web\nAdmin: /approve /block /unblock /blocked /countries",
+    help:
+      `📖 *Available commands:*\n\n` +
+      `🔹 /start — Show welcome & main menu\n` +
+      `🔹 /balance — Check your gem balance\n` +
+      `🔹 /topup — View top-up options & instructions\n` +
+      `🔹 /domains — List available email domains with prices\n` +
+      `🔹 /list — View your active orders\n` +
+      `🔹 /web — Open the web dashboard\n` +
+      `🔹 /lang — Switch language (en/zh)\n` +
+      `🔹 /order <site> [domain] — Place an order directly (advanced)\n` +
+      `🔹 /cancel <order_id> — Cancel an active order\n\n` +
+      `🔸 *Admin commands* (admins only):\n` +
+      `/approve, /reject, /revoke, /users, /user, /stats, /block, /unblock, /blocked, /reply, /setqr_tng, /setqr_bank, /balanceapi, /countries, /setcountry, /webhook, /admin`,
   },
   "zh-CN": {
     hi: (name) =>
@@ -114,7 +136,17 @@ const LANG = {
       `💎 余额: ${bal} 宝石\n📊 汇率: 1 MYR = ${rate} 宝石`,
     noGems: "您没有宝石。请点击 ➕ 充值。",
     topup: (rate, methods) =>
-      `选择套餐：\n汇率: 1 MYR = ${rate} 宝石\n\n${methods.map((m) => `• ${m.name}`).join("\n") || "请配置支付环境。"}`,
+      `💎 *充值宝石*\n\n` +
+      `汇率: 1 MYR = ${rate} 宝石\n` +
+      `可用方式: ${methods.map((m) => m.name).join(", ")}\n\n` +
+      `📌 *充值步骤:*\n` +
+      `1. 点击下方 *"➕ 充值"* 按钮或使用 /topup\n` +
+      `2. 输入金额（最低 RM 5）\n` +
+      `3. 选择 *TnG* 或 *银行转账*\n` +
+      `4. 转账到提供的账户/二维码\n` +
+      `5. 在网页应用中上传付款凭证\n` +
+      `6. 等待管理员审核 — 宝石自动到账\n\n` +
+      `⚠️ 如有问题，请联系 @admin。`,
     orderEmail: "📧 **邮箱激活**\n打开网页面板浏览可用域名并下单。",
     orderSms: "📱 **短信激活**\n打开网页面板浏览短信服务，查看价格并下单。",
     domains: (list) =>
@@ -134,7 +166,19 @@ const LANG = {
     smsActivated: (name, phone, cost, id, expires) =>
       `✅ ${name} 短信已激活！\n📱 ${phone}\n💎 ${cost} 宝石\n⏳ 过期时间: ${expires}\n🆔 ${id}`,
     blocked: "您已被禁止使用此机器人。",
-    help: "命令: /start /balance /topup /domains /list /web\n管理员: /approve /block /unblock /blocked /countries",
+    help:
+      `📖 *可用命令:*\n\n` +
+      `🔹 /start — 显示欢迎及主菜单\n` +
+      `🔹 /balance — 查询宝石余额\n` +
+      `🔹 /topup — 查看充值选项及说明\n` +
+      `🔹 /domains — 列出可用的邮箱域名及价格\n` +
+      `🔹 /list — 查看当前活跃订单\n` +
+      `🔹 /web — 打开网页控制面板\n` +
+      `🔹 /lang — 切换语言 (en/zh)\n` +
+      `🔹 /order <site> [domain] — 直接下单（高级）\n` +
+      `🔹 /cancel <order_id> — 取消活跃订单\n\n` +
+      `🔸 *管理员命令* (仅管理员):\n` +
+      `/approve, /reject, /revoke, /users, /user, /stats, /block, /unblock, /blocked, /reply, /setqr_tng, /setqr_bank, /balanceapi, /countries, /setcountry, /webhook, /admin`,
   },
 };
 
@@ -1059,6 +1103,25 @@ function createBot() {
       .filter(Boolean);
     const rawSite = parts[0] || "";
     const rawDomain = parts[1] || "";
+
+    // 🔹 新增：参数缺失时的友好提示
+    if (!rawSite) {
+      const appUrl = webAppUrl(user.accessToken);
+      let reply = `❌ *Missing service name.*\n\nUsage: /order <site> [domain]\nExample: /order telegram\n\n🌐 Or open the Web App to browse services and order with one click:`;
+      if (appUrl) {
+        await ctx.reply(reply, {
+          parse_mode: "Markdown",
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.webApp("🌐 Order Now", appUrl)],
+          ]),
+        });
+      } else {
+        await ctx.reply(reply + "\n\n(Web App URL not configured)", {
+          parse_mode: "Markdown",
+        });
+      }
+      return;
+    }
     try {
       const { site, domain } = await resolveOrderDomain(rawDomain, rawSite);
       const { costGems } = await estimateOrderCost(domain);
@@ -1082,7 +1145,10 @@ function createBot() {
     const user = await getOrCreateTelegramUser(ctx.from.id);
     const id = parseInt(ctx.message.text.replace(/^\/cancel\s*/i, ""), 10);
     if (!id) {
-      await ctx.reply("Usage: /cancel 1");
+      await ctx.reply(
+        `❌ *Missing order ID.*\n\nUsage: /cancel <order_id>\nExample: /cancel 123\n\nYou can find your order IDs with /list or in the Web App.`,
+        { parse_mode: "Markdown" },
+      );
       return;
     }
     const order = getOrderById(id, user.id);
