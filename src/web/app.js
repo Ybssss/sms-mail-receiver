@@ -59,19 +59,29 @@ async function createWebApp() {
   try {
     const { getDb } = require("../db/database");
     const db = getDb();
-    const tngDoc = await db.collection("app_config").findOne({ key: "qr_tng_base64" });
+    const tngDoc = await db
+      .collection("app_config")
+      .findOne({ key: "qr_tng_base64" });
     if (tngDoc?.value) {
       const fs = require("fs");
       const dir = path.join(__dirname, "public", "qr");
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "qr-tng.jpg"), Buffer.from(tngDoc.value, "base64"));
+      fs.writeFileSync(
+        path.join(dir, "qr-tng.jpg"),
+        Buffer.from(tngDoc.value, "base64"),
+      );
     }
-    const bankDoc = await db.collection("app_config").findOne({ key: "qr_bank_base64" });
+    const bankDoc = await db
+      .collection("app_config")
+      .findOne({ key: "qr_bank_base64" });
     if (bankDoc?.value) {
       const fs = require("fs");
       const dir = path.join(__dirname, "public", "qr");
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "qr-bank.jpg"), Buffer.from(bankDoc.value, "base64"));
+      fs.writeFileSync(
+        path.join(dir, "qr-bank.jpg"),
+        Buffer.from(bankDoc.value, "base64"),
+      );
     }
   } catch (e) {
     console.warn("QR restore failed:", e.message);
@@ -144,7 +154,11 @@ async function createWebApp() {
   app.use(
     express.static(path.join(__dirname, "public"), {
       setHeaders: (res, filePath) => {
-        if (filePath.endsWith(".js") || filePath.endsWith(".css") || filePath.endsWith(".html")) {
+        if (
+          filePath.endsWith(".js") ||
+          filePath.endsWith(".css") ||
+          filePath.endsWith(".html")
+        ) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
           res.setHeader("Pragma", "no-cache");
           res.setHeader("Expires", "0");
@@ -218,7 +232,10 @@ async function createWebApp() {
       const initData =
         typeof req.body === "string" ? req.body : req.body?.initData;
 
-      console.log("[AUTH] Telegram auth request received, initData length:", initData?.length || 0);
+      console.log(
+        "[AUTH] Telegram auth request received, initData length:",
+        initData?.length || 0,
+      );
       if (!initData) {
         console.log("[AUTH] No initData provided");
         res.status(401).json({ error: "Missing Telegram initData" });
@@ -228,26 +245,45 @@ async function createWebApp() {
       // Detailed pre-validation logging
       try {
         const tempParams = new URLSearchParams(initData);
-        console.log("[AUTH] initData params: hash present =", !!tempParams.get("hash"),
-          ", user present =", !!tempParams.get("user"),
-          ", auth_date =", tempParams.get("auth_date") || "MISSING",
-          ", total keys =", [...tempParams.keys()].length);
+        console.log(
+          "[AUTH] initData params: hash present =",
+          !!tempParams.get("hash"),
+          ", user present =",
+          !!tempParams.get("user"),
+          ", auth_date =",
+          tempParams.get("auth_date") || "MISSING",
+          ", total keys =",
+          [...tempParams.keys()].length,
+        );
       } catch (e) {
         console.log("[AUTH] initData parse error:", e.message);
       }
 
       const parsed = validateInitData(initData);
       if (!parsed) {
-        console.log("[AUTH] initData validation FAILED — hash mismatch or expired (bot token configured:", !!config.botToken, ")");
+        console.log(
+          "[AUTH] initData validation FAILED — hash mismatch or expired (bot token configured:",
+          !!config.botToken,
+          ")",
+        );
         res.status(401).json({ error: "Invalid Telegram session" });
         return;
       }
 
-      console.log("[AUTH] Validated Telegram user:", parsed.user.id, "first_name:", parsed.user.first_name,
-        "language_code:", parsed.user.language_code || "none");
+      console.log(
+        "[AUTH] Validated Telegram user:",
+        parsed.user.id,
+        "first_name:",
+        parsed.user.first_name,
+        "language_code:",
+        parsed.user.language_code || "none",
+      );
       try {
         const user = await getOrCreateTelegramUser(parsed.user.id);
-        console.log("[AUTH] User lookup done, token:", user.accessToken ? user.accessToken.substring(0, 8) + "..." : "NONE");
+        console.log(
+          "[AUTH] User lookup done, token:",
+          user.accessToken ? user.accessToken.substring(0, 8) + "..." : "NONE",
+        );
         res.json({
           token: user.accessToken,
           source: "telegram",
@@ -314,9 +350,9 @@ async function createWebApp() {
       req.path === "/health" ||
       req.path === "/config" ||
       req.path === "/telegram-auth" ||
-    req.path === "/session" ||
-    req.path === "/sms-countries" ||
-    req.path === "/debug/merge"
+      req.path === "/session" ||
+      req.path === "/sms-countries" ||
+      req.path === "/debug/merge"
     ) {
       return next();
     }
@@ -356,8 +392,15 @@ async function createWebApp() {
   });
 
   app.get("/api/wallet/transactions", async (req, res) => {
-    const transactions = await listTransactions(req.user.id, { limit: 50 });
-    res.json({ transactions });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const type = req.query.type || null;
+    try {
+      const result = await listTransactions(req.user.id, { page, limit, type });
+      res.json(result); // 直接返回 { transactions, pagination }
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get("/api/exchange", async (_req, res) => {
@@ -471,7 +514,12 @@ async function createWebApp() {
         // Your real cost: (USD × 1.11 purchase tax) × USD/MYR × 1.06 conversion tax × (1 + markup%)
         const purchaseTax = 1.11;
         const conversionTax = 1.06;
-        const costMyr = costUsd * purchaseTax * conversionTax * usdMyr * (1 + config.orderMarkupPercent / 100);
+        const costMyr =
+          costUsd *
+          purchaseTax *
+          conversionTax *
+          usdMyr *
+          (1 + config.orderMarkupPercent / 100);
         const costGems = Math.max(
           Math.round(costMyr * gemsPerMyrVal),
           config.minOrderGems,
@@ -487,8 +535,14 @@ async function createWebApp() {
         };
       });
 
-      console.log(`[DEBUG] /api/sms-services returning ${enriched.length} services for country ${countryId}`);
-      res.json({ services: enriched, enabled: true, currentCountryId: countryId });
+      console.log(
+        `[DEBUG] /api/sms-services returning ${enriched.length} services for country ${countryId}`,
+      );
+      res.json({
+        services: enriched,
+        enabled: true,
+        currentCountryId: countryId,
+      });
     } catch (err) {
       console.error("[DEBUG] SMS services error:", err.message);
       res.status(502).json({ error: err.message });
@@ -498,7 +552,8 @@ async function createWebApp() {
   app.post("/api/sms/order", orderLimiter, async (req, res) => {
     try {
       const service = (req.body?.service || "").trim();
-      const country = (req.body?.country || "").trim() || config.smsActivateCountryId || "7";
+      const country =
+        (req.body?.country || "").trim() || config.smsActivateCountryId || "7";
       if (!service) {
         res.status(400).json({ error: "service is required" });
         return;
@@ -511,10 +566,7 @@ async function createWebApp() {
       });
 
       // Get SMS number with user's selected country (or default)
-      const activation = await getSmsNumber(
-        service,
-        country,
-      );
+      const activation = await getSmsNumber(service, country);
 
       // Calculate gem cost
       const usdMyr =
@@ -524,7 +576,12 @@ async function createWebApp() {
       // Your real cost: (USD × 1.11 purchase tax) × USD/MYR × 1.06 conversion tax × (1 + markup%)
       const purchaseTax = 1.11;
       const conversionTax = 1.06;
-      const costMyr = activation.cost * purchaseTax * conversionTax * usdMyr * (1 + config.orderMarkupPercent / 100);
+      const costMyr =
+        activation.cost *
+        purchaseTax *
+        conversionTax *
+        usdMyr *
+        (1 + config.orderMarkupPercent / 100);
       const costGems = Math.max(
         Math.round(costMyr * gemsPerMyrVal),
         config.minOrderGems,
@@ -635,7 +692,8 @@ async function createWebApp() {
   app.get("/api/sms-activations", async (req, res) => {
     try {
       const db = getDb();
-      const activations = await db.collection("sms_activations")
+      const activations = await db
+        .collection("sms_activations")
         .find({ user_id: req.user.id })
         .sort({ created_at: -1 })
         .limit(50)
@@ -804,7 +862,10 @@ async function createWebApp() {
     }
 
     const callerTelegramId = req.get("x-admin-telegram-id");
-    if (!callerTelegramId || !config.adminTelegramIds.includes(String(callerTelegramId))) {
+    if (
+      !callerTelegramId ||
+      !config.adminTelegramIds.includes(String(callerTelegramId))
+    ) {
       res.status(403).json({ error: "Admin-only debug endpoint" });
       return;
     }
@@ -825,10 +886,16 @@ async function createWebApp() {
   });
 
   app.post("/api/admin/submit-proof", async (req, res) => {
-    console.log("[DEBUG] submit-proof called, body keys:", Object.keys(req.body || {}));
+    console.log(
+      "[DEBUG] submit-proof called, body keys:",
+      Object.keys(req.body || {}),
+    );
     const { paymentId, proof, fileName } = req.body || {};
     if (!paymentId || !proof) {
-      console.log("[DEBUG] submit-proof missing fields:", { paymentId: !!paymentId, proof: !!proof });
+      console.log("[DEBUG] submit-proof missing fields:", {
+        paymentId: !!paymentId,
+        proof: !!proof,
+      });
       res.status(400).json({ error: "paymentId and proof (base64) required" });
       return;
     }
@@ -837,10 +904,18 @@ async function createWebApp() {
       const db = getDb();
       const { ObjectId } = require("mongodb");
       let paymentFilter;
-      try { paymentFilter = { _id: new ObjectId(String(paymentId)) }; } catch { res.status(400).json({ error: "Invalid payment ID" }); return; }
-      
+      try {
+        paymentFilter = { _id: new ObjectId(String(paymentId)) };
+      } catch {
+        res.status(400).json({ error: "Invalid payment ID" });
+        return;
+      }
+
       const row = await db.collection("payments").findOne(paymentFilter);
-      console.log("[DEBUG] submit-proof found row:", row ? `status=${row.status}, user_id=${row.user_id}` : "NONE");
+      console.log(
+        "[DEBUG] submit-proof found row:",
+        row ? `status=${row.status}, user_id=${row.user_id}` : "NONE",
+      );
       if (!row || row.user_id !== req.user.id) {
         res.status(404).json({ error: "Payment not found or access denied" });
         return;
@@ -850,19 +925,25 @@ async function createWebApp() {
       const fs = require("fs");
       const path = require("path");
       const os = require("os");
-      const tmpFile = path.join(os.tmpdir(), `proof_${paymentId}_${Date.now()}.jpg`);
+      const tmpFile = path.join(
+        os.tmpdir(),
+        `proof_${paymentId}_${Date.now()}.jpg`,
+      );
       const proofBuffer = Buffer.from(proof, "base64");
       fs.writeFileSync(tmpFile, proofBuffer);
 
       // Store minimal meta
-      const existingMeta = typeof row.meta === "object" && row.meta !== null ? row.meta : {};
+      const existingMeta =
+        typeof row.meta === "object" && row.meta !== null ? row.meta : {};
       existingMeta.proofFileName = fileName || "";
       existingMeta.proofSize = proof.length;
       existingMeta.proofSaved = true;
-      await db.collection("payments").updateOne(
-        { _id: row._id },
-        { $set: { meta: existingMeta, status: "pending_review" } }
-      );
+      await db
+        .collection("payments")
+        .updateOne(
+          { _id: row._id },
+          { $set: { meta: existingMeta, status: "pending_review" } },
+        );
 
       // Send photo to admin via Telegram
       const adminIds = config.adminTelegramIds;
@@ -879,34 +960,57 @@ async function createWebApp() {
             `👤 User ID: #usr_${userId}`,
             `📱 Telegram: ${userTelegramId}`,
             `💵 RM ${row.amount_myr} → ${row.gems} gems`,
-            `📎 ${fileName || "receipt.jpg"} (${Math.round(proof.length/1024)}KB)`,
+            `📎 ${fileName || "receipt.jpg"} (${Math.round(proof.length / 1024)}KB)`,
           ].join("\n");
 
           for (const adminId of adminIds) {
             try {
-              await bot.telegram.sendPhoto(adminId, { source: tmpFile }, {
-                caption,
-                reply_markup: {
-                  inline_keyboard: [[
-                    { text: "✅ Approve", callback_data: `confirm_approve_${paymentId}` },
-                    { text: "❌ Reject", callback_data: `confirm_reject_${paymentId}` },
-                  ]]
-                }
-              });
+              await bot.telegram.sendPhoto(
+                adminId,
+                { source: tmpFile },
+                {
+                  caption,
+                  reply_markup: {
+                    inline_keyboard: [
+                      [
+                        {
+                          text: "✅ Approve",
+                          callback_data: `confirm_approve_${paymentId}`,
+                        },
+                        {
+                          text: "❌ Reject",
+                          callback_data: `confirm_reject_${paymentId}`,
+                        },
+                      ],
+                    ],
+                  },
+                },
+              );
               console.log("[DEBUG] submit-proof sent photo to admin", adminId);
             } catch (e) {
-              console.error("[DEBUG] submit-proof sendPhoto failed for admin", adminId, ":", e.message);
+              console.error(
+                "[DEBUG] submit-proof sendPhoto failed for admin",
+                adminId,
+                ":",
+                e.message,
+              );
               // Fallback: text message
-              try { await bot.telegram.sendMessage(adminId, caption); } catch {}
+              try {
+                await bot.telegram.sendMessage(adminId, caption);
+              } catch {}
             }
           }
         } else {
-          console.error("[DEBUG] submit-proof bot is NULL — no notification sent");
+          console.error(
+            "[DEBUG] submit-proof bot is NULL — no notification sent",
+          );
         }
       }
 
       // Clean up temp file
-      try { fs.unlinkSync(tmpFile); } catch {}
+      try {
+        fs.unlinkSync(tmpFile);
+      } catch {}
 
       res.json({ ok: true, message: "Proof submitted for admin review" });
     } catch (err) {
@@ -922,23 +1026,35 @@ async function createWebApp() {
       res.status(400).json({ error: "paymentId required" });
       return;
     }
-    console.log("[DEBUG] cancel-payment request:", { paymentId, userId: req.user.id });
+    console.log("[DEBUG] cancel-payment request:", {
+      paymentId,
+      userId: req.user.id,
+    });
     try {
       const { getDb } = require("../db/database");
       const db = getDb();
       const { ObjectId } = require("mongodb");
       let filter;
-      try { filter = { _id: new ObjectId(String(paymentId)) }; } catch { res.status(400).json({ error: "Invalid payment ID" }); return; }
+      try {
+        filter = { _id: new ObjectId(String(paymentId)) };
+      } catch {
+        res.status(400).json({ error: "Invalid payment ID" });
+        return;
+      }
       const row = await db.collection("payments").findOne(filter);
       if (!row || row.user_id !== req.user.id) {
         res.status(404).json({ error: "Payment not found" });
         return;
       }
       if (row.status !== "pending" && row.status !== "pending_review") {
-        res.status(400).json({ error: `Cannot cancel payment in status: ${row.status}` });
+        res
+          .status(400)
+          .json({ error: `Cannot cancel payment in status: ${row.status}` });
         return;
       }
-      await db.collection("payments").updateOne(filter, { $set: { status: "cancelled" } });
+      await db
+        .collection("payments")
+        .updateOne(filter, { $set: { status: "cancelled" } });
       console.log("[DEBUG] cancel-payment success:", paymentId);
       res.json({ ok: true, message: "Payment cancelled" });
     } catch (err) {
@@ -974,12 +1090,18 @@ async function createWebApp() {
     try {
       const db = getDb();
       const pending = await listPendingManualPayments();
-      const [blocked, totalUsers, totalOrders, totalPayments] = await Promise.all([
-        db.collection("blocked_users").find().sort({ blocked_at: -1 }).limit(20).toArray(),
-        db.collection("users").countDocuments(),
-        db.collection("email_orders").countDocuments(),
-        db.collection("payments").countDocuments({ status: "paid" }),
-      ]);
+      const [blocked, totalUsers, totalOrders, totalPayments] =
+        await Promise.all([
+          db
+            .collection("blocked_users")
+            .find()
+            .sort({ blocked_at: -1 })
+            .limit(20)
+            .toArray(),
+          db.collection("users").countDocuments(),
+          db.collection("email_orders").countDocuments(),
+          db.collection("payments").countDocuments({ status: "paid" }),
+        ]);
       let apiBalance = null;
       try {
         const {
@@ -1012,11 +1134,9 @@ async function createWebApp() {
     const filename = type === "tng" ? "qr-tng.jpg" : "qr-bank.jpg";
     const { getDb } = require("../db/database");
     const d = getDb();
-    await d.collection("app_config").updateOne(
-      { key },
-      { $set: { key, value: base64 } },
-      { upsert: true }
-    );
+    await d
+      .collection("app_config")
+      .updateOne({ key }, { $set: { key, value: base64 } }, { upsert: true });
     const fs = require("fs");
     const path = require("path");
     const dir = path.join(__dirname, "public", "qr");

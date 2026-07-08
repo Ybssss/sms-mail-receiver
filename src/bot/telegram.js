@@ -209,7 +209,7 @@ function getUserLang(telegramId) {
 
 function webAppUrl(token) {
   if (!config.webappUrl) return null;
-  return `${config.webappUrl}/?token=${token}`;
+  return config.webappUrl; // 只返回基础 URL
 }
 
 function replyKeyboard(token, userId) {
