@@ -1734,7 +1734,7 @@ function createBot() {
 
     console.log("[BROADCAST] Pending broadcasts size:", pendingBroadcasts.size);
 
-    await ctx.reply(
+    const sent = await ctx.reply(
       `⚠️ *Confirm Broadcast*\n\n` +
         `Target: ${targetDesc}\n` +
         `Message: ${messageText}\n\n` +
@@ -1749,7 +1749,6 @@ function createBot() {
         ],
       ]),
     );
-    const sent = await ctx.reply(/*...*/);
     console.log(
       "[BROADCAST] Sent message reply_markup:",
       JSON.stringify(sent.reply_markup),
