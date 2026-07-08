@@ -412,6 +412,9 @@ async function forwardToAdmins(bot, ctx) {
   }
 }
 
+// ── Broadcast temporary storage ───────────────────────────────
+const pendingBroadcasts = new Map();
+
 function createBot() {
   if (!config.botToken) {
     console.warn("TELEGRAM_BOT_TOKEN not set — bot disabled");
@@ -1681,6 +1684,7 @@ function createBot() {
   });
 
   // ── Broadcast to users ─────────────────────────────────────────
+  // ── Broadcast to users ─────────────────────────────────────────
   bot.command("broadcast", async (ctx) => {
     if (!isAdmin(ctx.from.id)) {
       await ctx.reply("Admin only.");
@@ -1718,6 +1722,16 @@ function createBot() {
               ? "TEST (admins only)"
               : "Unknown target";
 
+    // ── 生成唯一 ID 并存储广播参数 ─────────────────────────────
+    const broadcastId =
+      Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+    pendingBroadcasts.set(broadcastId, {
+      type,
+      messageText,
+      adminId: ctx.from.id,
+      createdAt: Date.now(),
+    });
+
     await ctx.reply(
       `⚠️ *Confirm Broadcast*\n\n` +
         `Target: ${targetDesc}\n` +
@@ -1729,7 +1743,7 @@ function createBot() {
           [
             Markup.button.callback(
               "✅ Confirm Send",
-              `broadcast_confirm_${type}_${encodeURIComponent(messageText)}`,
+              `broadcast_confirm_${broadcastId}`,
             ),
             Markup.button.callback("❌ Cancel", "broadcast_cancel"),
           ],
@@ -1739,12 +1753,21 @@ function createBot() {
   });
 
   // ── Broadcast confirmation ──────────────────────────────────────
-  bot.action(/^broadcast_confirm_(all|en|zh|test)_(.+)$/, async (ctx) => {
+  bot.action(/^broadcast_confirm_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     if (!isAdmin(ctx.from.id)) return;
 
-    const type = ctx.match[1];
-    const messageText = decodeURIComponent(ctx.match[2]);
+    const broadcastId = ctx.match[1];
+    const broadcastData = pendingBroadcasts.get(broadcastId);
+
+    if (!broadcastData) {
+      await ctx.reply("❌ Broadcast session expired or not found.");
+      return;
+    }
+
+    const { type, messageText } = broadcastData;
+    // 立即删除存储，防止重复使用
+    pendingBroadcasts.delete(broadcastId);
 
     // 获取目标用户
     let users = [];
